@@ -20,7 +20,7 @@ class InternalSensorManager {
 
   void start() {
     if (isRunning) return;
-    _accSub = userAccelerometerEventStream().listen((event) {
+    _accSub = accelerometerEventStream().listen((event) {
       _lastAx = event.x;
       _lastAy = event.y;
       _lastAz = event.z;
@@ -37,7 +37,6 @@ class InternalSensorManager {
     });
 
     isRunning = true;
-    print("Internal Sensors Started (50Hz)");
   }
 
   void stop() {
@@ -45,7 +44,6 @@ class InternalSensorManager {
     _gyroSub?.cancel();
     _ticker?.cancel();
     isRunning = false;
-    print("Internal Sensors Stopped");
   }
 
   void _emitPacket() {

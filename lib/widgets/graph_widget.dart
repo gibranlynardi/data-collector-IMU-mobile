@@ -29,6 +29,20 @@ class _GraphWidgetState extends State<GraphWidget> with AutomaticKeepAliveClient
   @override
   void initState() {
     super.initState();
+    _subscribeToStream(); 
+  }
+
+  
+  @override
+  void didUpdateWidget(GraphWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.dataStream != oldWidget.dataStream) {
+      _sub?.cancel(); 
+      _subscribeToStream(); 
+    }
+  }
+
+  void _subscribeToStream() {
     _sub = widget.dataStream.listen((packet) {
       if (mounted) {
         setState(() {
