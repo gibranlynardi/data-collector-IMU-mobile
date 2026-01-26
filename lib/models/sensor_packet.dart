@@ -5,7 +5,6 @@ class SensorPacket {
   final double gyroX;
   final double gyroY;
   final double gyroZ;
-
   final DateTime timestamp;
 
   SensorPacket({
@@ -24,16 +23,17 @@ class SensorPacket {
            'G[${gyroX.toStringAsFixed(2)}, ${gyroY.toStringAsFixed(2)}, ${gyroZ.toStringAsFixed(2)}]';
   }
 
-  List<dynamic> toCsvRow(String label) {
+  List<dynamic> toCsvRow(int location, int label) {
     return [
-      timestamp.toIso8601String(), 
-      accX,                        
-      accY,                       
-      accZ,                       
-      gyroX,                      
-      gyroY,                     
-      gyroZ,                      
-      label                        
+      timestamp.toIso8601String(),
+      accX, 
+      accY, 
+      accZ,
+      gyroX, 
+      gyroY, 
+      gyroZ,
+      location, 
+      label     
     ];
   }
 }

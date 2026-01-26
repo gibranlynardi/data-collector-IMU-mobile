@@ -14,7 +14,9 @@ class CsvLogger {
   File? _currentFile;
   IOSink? _sink;
   bool isRecording = false;
-  String currentLabel = "IDLE";
+  
+  int currentLocation = 0; 
+  int currentLabel = 0;
 
   Future<String> startRecording(String fileName) async {
     if (isRecording) return "Already recording";
@@ -28,7 +30,7 @@ class CsvLogger {
     try {
       Directory? dir;
       if (Platform.isAndroid) {
-        dir = await getExternalStorageDirectory(); 
+        dir = await getExternalStorageDirectory();
       } else {
         dir = await getApplicationDocumentsDirectory();
       }
@@ -42,7 +44,7 @@ class CsvLogger {
       _currentFile = File(fullPath);
       _sink = _currentFile!.openWrite();
 
-      _sink!.writeln("Timestamp,Acc_X,Acc_Y,Acc_Z,Gyro_X,Gyro_Y,Gyro_Z,Label");
+      _sink!.writeln("timestamp,acc_X_g,acc_Y_g,acc_Z_g,gyro_X_deg,gyro_Y_deg,gyro_Z_deg,location,label");
 
       isRecording = true;
       return fullPath;
@@ -63,7 +65,7 @@ class CsvLogger {
   void writePacket(SensorPacket packet) {
     if (_sink == null || !isRecording) return;
 
-    List<dynamic> row = packet.toCsvRow(currentLabel);
+    List<dynamic> row = packet.toCsvRow(currentLocation, currentLabel);
 
     String csvLine = const ListToCsvConverter().convert([row]);
     _sink!.writeln(csvLine);

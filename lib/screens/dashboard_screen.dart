@@ -21,7 +21,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   StreamSubscription? _dataSub;
   Stream<SensorPacket>? _currentStream;
 
-  final List<String> _activities = ["IDLE", "WALK", "RUN", "JUMP", "FALL", "SIT"];
+  final List<int> _integerOptions = List.generate(11, (index) => index);
+  
+  int _selectedLocation = 0;
+  int _selectedLabel = 0;
 
   @override
   void initState() {
@@ -40,9 +43,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _currentStream = BluetoothManager().dataStream;
     }
 
-   
     _dataSub = _currentStream!.listen((packet) {
       if (CsvLogger().isRecording) {
+        CsvLogger().currentLocation = _selectedLocation;
+        CsvLogger().currentLabel = _selectedLabel;
         CsvLogger().writePacket(packet);
       }
     });
@@ -63,13 +67,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("6-Axis Logger"),
+        title: const Text("IMU Collector"),
         backgroundColor: isRecording ? Colors.red : Colors.deepPurple,
         actions: [
           Row(
             children: [
-              Icon(_useInternalSensor ? Icons.phone_android : Icons.memory, size: 20),
-              const SizedBox(width: 5),
+              Text(_useInternalSensor ? "HP SENSORS" : "BLUETOOTH", style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
               Switch(
                 value: _useInternalSensor,
                 activeColor: Colors.orange,
@@ -93,12 +96,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
               : ListView(
                   padding: const EdgeInsets.all(5),
                   children: [
-                    const Padding(padding: EdgeInsets.all(5), child: Text("Accelerometer", style: TextStyle(fontWeight: FontWeight.bold))),
+                    const Padding(padding: EdgeInsets.all(5), child: Text("Accelerometer (g)", style: TextStyle(fontWeight: FontWeight.bold))),
                     GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'accel', axis: 'x'),
                     GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'accel', axis: 'y'),
                     GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'accel', axis: 'z'),
                     
-                    const Padding(padding: EdgeInsets.all(5), child: Text("Gyroscope", style: TextStyle(fontWeight: FontWeight.bold))),
+                    const Padding(padding: EdgeInsets.all(5), child: Text("Gyroscope (deg/s)", style: TextStyle(fontWeight: FontWeight.bold))),
                     GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'gyro', axis: 'x'),
                     GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'gyro', axis: 'y'),
                     GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'gyro', axis: 'z'),
@@ -107,45 +110,110 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
 
           Container(
-            padding: const EdgeInsets.all(16),
-            color: Colors.grey.shade100,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [BoxShadow(color: Colors.grey.shade300, blurRadius: 5, offset: const Offset(0, -2))],
+            ),
             child: Column(
+              mainAxisSize: MainAxisSize.min, 
               children: [
-                Text("MODE: ${_useInternalSensor ? "INTERNAL HP" : "BLUETOOTH ARDUINO"}", 
-                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigo)),
-                const SizedBox(height: 5),
-                Text("Label: ${CsvLogger().currentLabel}", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue)),
-                
-                const SizedBox(height: 10),
                 Row(
                   children: [
                     Expanded(
                       child: TextField(
                         controller: _fileNameController,
-                        decoration: const InputDecoration(labelText: "File Name", border: OutlineInputBorder(), isDense: true),
+                        decoration: const InputDecoration(
+                          labelText: "File Name", 
+                          border: OutlineInputBorder(), 
+                          isDense: true, // Lebih tipis
+                          contentPadding: EdgeInsets.all(8)
+                        ),
                         enabled: !isRecording,
                       ),
                     ),
                     const SizedBox(width: 10),
-                    FloatingActionButton(
-                      backgroundColor: isRecording ? Colors.red : Colors.green,
-                      child: Icon(isRecording ? Icons.stop : Icons.fiber_manual_record),
-                      onPressed: () => _toggleRecording(),
+                    SizedBox(
+                      height: 45,
+                      width: 45,
+                      child: FloatingActionButton(
+                        backgroundColor: isRecording ? Colors.red : Colors.green,
+                        child: Icon(isRecording ? Icons.stop : Icons.fiber_manual_record),
+                        onPressed: () => _toggleRecording(),
+                      ),
                     ),
                   ],
                 ),
                 
                 const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  children: _activities.map((label) {
-                    return ChoiceChip(
-                      label: Text(label),
-                      selected: CsvLogger().currentLabel == label,
-                      onSelected: (_) => setState(() => CsvLogger().currentLabel = label),
-                    );
-                  }).toList(),
-                )
+
+                Row(
+                  children: [
+                    Expanded(
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: "Location",
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<int>(
+                            value: _selectedLocation,
+                            isExpanded: true,
+                            items: _integerOptions.map((int value) {
+                              return DropdownMenuItem<int>(
+                                value: value,
+                                child: Text(value.toString()),
+                              );
+                            }).toList(),
+                            onChanged: (newValue) {
+                              setState(() => _selectedLocation = newValue!);
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+                    
+                    const SizedBox(width: 10),
+
+                    Expanded(
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: "Label",
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<int>(
+                            value: _selectedLabel,
+                            isExpanded: true,
+                            items: _integerOptions.map((int value) {
+                              return DropdownMenuItem<int>(
+                                value: value,
+                                child: Text(value.toString()),
+                              );
+                            }).toList(),
+                            onChanged: (newValue) {
+                              setState(() => _selectedLabel = newValue!);
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                
+                Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Text(
+                    "STATUS: $_statusMessage | REC: ${isRecording ? "ON" : "OFF"}",
+                    style: TextStyle(
+                      fontSize: 12, 
+                      fontWeight: FontWeight.bold, 
+                      color: isRecording ? Colors.red : Colors.grey
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -157,11 +225,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _toggleRecording() async {
     if (CsvLogger().isRecording) {
       await CsvLogger().stopRecording();
-      setState(() => _statusMessage = "Saved.");
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("File saved!")));
+      setState(() => _statusMessage = "File Saved.");
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Data saved successfully!")));
     } else {
+      CsvLogger().currentLocation = _selectedLocation;
+      CsvLogger().currentLabel = _selectedLabel;
+      
       String path = await CsvLogger().startRecording(_fileNameController.text);
-      setState(() => _statusMessage = "Rec...");
+      setState(() => _statusMessage = "Recording...");
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Saving to $path")));
     }
   }
