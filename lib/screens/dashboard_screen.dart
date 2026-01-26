@@ -22,9 +22,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Stream<SensorPacket>? _currentStream;
 
   final List<int> _integerOptions = List.generate(11, (index) => index);
+  final List<int> _frequencyOptions = [1, 5, 10, 20, 40, 50, 100]; 
   
   int _selectedLocation = 0;
   int _selectedLabel = 0;
+  int _selectedFrequency = 50; 
 
   @override
   void initState() {
@@ -36,7 +38,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _dataSub?.cancel();
 
     if (_useInternalSensor) {
-      InternalSensorManager().start();
+      InternalSensorManager().start(frequency: _selectedFrequency);
       _currentStream = InternalSensorManager().dataStream;
     } else {
       InternalSensorManager().stop();
@@ -96,12 +98,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
               : ListView(
                   padding: const EdgeInsets.all(5),
                   children: [
-                    const Padding(padding: EdgeInsets.all(5), child: Text("Accelerometer (g)", style: TextStyle(fontWeight: FontWeight.bold))),
+                    Padding(
+                      padding: const EdgeInsets.all(5), 
+                      child: Text(
+                        "Accelerometer (${_useInternalSensor ? "$_selectedFrequency Hz" : "Ext"})", 
+                        style: const TextStyle(fontWeight: FontWeight.bold)
+                      )
+                    ),
                     GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'accel', axis: 'x'),
                     GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'accel', axis: 'y'),
                     GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'accel', axis: 'z'),
                     
-                    const Padding(padding: EdgeInsets.all(5), child: Text("Gyroscope (deg/s)", style: TextStyle(fontWeight: FontWeight.bold))),
+                    const Padding(padding: EdgeInsets.all(5), child: Text("Gyroscope", style: TextStyle(fontWeight: FontWeight.bold))),
                     GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'gyro', axis: 'x'),
                     GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'gyro', axis: 'y'),
                     GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'gyro', axis: 'z'),
@@ -116,7 +124,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               boxShadow: [BoxShadow(color: Colors.grey.shade300, blurRadius: 5, offset: const Offset(0, -2))],
             ),
             child: Column(
-              mainAxisSize: MainAxisSize.min, 
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Row(
                   children: [
@@ -126,7 +134,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         decoration: const InputDecoration(
                           labelText: "File Name", 
                           border: OutlineInputBorder(), 
-                          isDense: true, // Lebih tipis
+                          isDense: true, 
                           contentPadding: EdgeInsets.all(8)
                         ),
                         enabled: !isRecording,
@@ -145,16 +153,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
                 
-                const SizedBox(height: 10),
-
+                const SizedBox(height: 8),
                 Row(
                   children: [
                     Expanded(
+                      flex: 2, 
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: "Freq (Hz)",
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<int>(
+                            value: _selectedFrequency,
+                            isExpanded: true,
+                            onChanged: (isRecording || !_useInternalSensor) ? null : (newValue) {
+                              setState(() {
+                                _selectedFrequency = newValue!;
+                                _initStream(); 
+                              });
+                            },
+                            items: _frequencyOptions.map((int value) {
+                              return DropdownMenuItem<int>(
+                                value: value,
+                                child: Text(value.toString(), style: const TextStyle(fontSize: 13)),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(width: 8),
+
+                    Expanded(
+                      flex: 2,
                       child: InputDecorator(
                         decoration: const InputDecoration(
                           labelText: "Location",
                           border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
                         ),
                         child: DropdownButtonHideUnderline(
                           child: DropdownButton<int>(
@@ -163,7 +202,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             items: _integerOptions.map((int value) {
                               return DropdownMenuItem<int>(
                                 value: value,
-                                child: Text(value.toString()),
+                                child: Text(value.toString(), style: const TextStyle(fontSize: 13)),
                               );
                             }).toList(),
                             onChanged: (newValue) {
@@ -174,14 +213,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                     
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 8),
 
                     Expanded(
+                      flex: 2,
                       child: InputDecorator(
                         decoration: const InputDecoration(
                           labelText: "Label",
                           border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
                         ),
                         child: DropdownButtonHideUnderline(
                           child: DropdownButton<int>(
@@ -190,7 +230,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             items: _integerOptions.map((int value) {
                               return DropdownMenuItem<int>(
                                 value: value,
-                                child: Text(value.toString()),
+                                child: Text(value.toString(), style: const TextStyle(fontSize: 13)),
                               );
                             }).toList(),
                             onChanged: (newValue) {
@@ -208,7 +248,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   child: Text(
                     "STATUS: $_statusMessage | REC: ${isRecording ? "ON" : "OFF"}",
                     style: TextStyle(
-                      fontSize: 12, 
+                      fontSize: 11, 
                       fontWeight: FontWeight.bold, 
                       color: isRecording ? Colors.red : Colors.grey
                     ),
@@ -232,7 +272,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       CsvLogger().currentLabel = _selectedLabel;
       
       String path = await CsvLogger().startRecording(_fileNameController.text);
-      setState(() => _statusMessage = "Recording...");
+      setState(() => _statusMessage = "Rec $_selectedFrequency Hz...");
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Saving to $path")));
     }
   }
