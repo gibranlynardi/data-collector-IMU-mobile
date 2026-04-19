@@ -11,6 +11,7 @@ pnpm-debug.log*
 .env
 .env.local
 .env.*.local
+.venv/
 
 # Build output
 dist/
@@ -54,6 +55,10 @@ temp/
 # =========================
 .cache/
 .parcel-cache/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
 
 # =========================
 # Misc
@@ -64,3 +69,5 @@ temp/
 
 # Jangan ignore package-lock.json kalau pakai npm!
 # (biasanya tetap di-commit)
+
+todo_list.md

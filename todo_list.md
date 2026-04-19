@@ -56,110 +56,132 @@ Roadmap ini mengikuti arsitektur terbaru:
 - Nomor urut memakai zero-padding: `NNN` untuk device, `NNNN` untuk annotation.
 - Session dengan status `ENDING` atau `SYNCING` dianggap belum selesai dan memblokir pembuatan session baru.
 - Finalisasi struktur folder rinci tetap mengikuti Phase 9; keputusan di Phase 0 ini adalah baseline yang wajib konsisten.
+- Audit trail annotation sudah mulai diimplementasikan di backend (`annotation_audits`) untuk operasi patch/stop/delete label timeline.
 
 ---
 
 ## Phase 1: Protobuf Contract
 
-- [ ] Buat folder kontrak Protobuf, misalnya `proto/`.
-- [ ] Buat `sensor_sample.proto`.
-- [ ] Definisikan message `SensorSample`:
-  - [ ] `session_id`.
-  - [ ] `device_id`.
-  - [ ] `device_role`.
-  - [ ] `seq`.
-  - [ ] `timestamp_device_unix_ns`.
-  - [ ] `elapsed_ms`.
-  - [ ] `acc_x_g`.
-  - [ ] `acc_y_g`.
-  - [ ] `acc_z_g`.
-  - [ ] `gyro_x_deg`.
-  - [ ] `gyro_y_deg`.
-  - [ ] `gyro_z_deg`.
-- [ ] Definisikan message `SensorBatch`:
-  - [ ] `session_id`.
-  - [ ] `device_id`.
-  - [ ] `start_seq`.
-  - [ ] `end_seq`.
-  - [ ] repeated `SensorSample`.
-- [ ] Buat `device_status.proto`.
-- [ ] Definisikan message `DeviceStatus`:
-  - [ ] `device_id`.
-  - [ ] `device_role`.
-  - [ ] `connected`.
-  - [ ] `recording`.
-  - [ ] `local_last_seq`.
-  - [ ] `backend_last_ack_seq`.
-  - [ ] `pending_samples`.
-  - [ ] `battery_percent`.
-  - [ ] `storage_free_mb`.
-  - [ ] `effective_hz`.
-- [ ] Buat `control.proto`.
-- [ ] Definisikan command backend ke phone:
-  - [ ] `START_SESSION`.
-  - [ ] `STOP_SESSION`.
-  - [ ] `SYNC_CLOCK`.
-  - [ ] `SYNC_REQUIRED`.
-  - [ ] `PING`.
+- [x] Buat folder kontrak Protobuf, misalnya `proto/`.
+- [x] Buat `sensor_sample.proto`.
+- [x] Definisikan message `SensorSample`:
+  - [x] `session_id`.
+  - [x] `device_id`.
+  - [x] `device_role`.
+  - [x] `seq`.
+  - [x] `timestamp_device_unix_ns`.
+  - [x] `elapsed_ms`.
+  - [x] `acc_x_g`.
+  - [x] `acc_y_g`.
+  - [x] `acc_z_g`.
+  - [x] `gyro_x_deg`.
+  - [x] `gyro_y_deg`.
+  - [x] `gyro_z_deg`.
+- [x] Definisikan message `SensorBatch`:
+  - [x] `session_id`.
+  - [x] `device_id`.
+  - [x] `start_seq`.
+  - [x] `end_seq`.
+  - [x] repeated `SensorSample`.
+- [x] Buat `device_status.proto`.
+- [x] Definisikan message `DeviceStatus`:
+  - [x] `device_id`.
+  - [x] `device_role`.
+  - [x] `connected`.
+  - [x] `recording`.
+  - [x] `local_last_seq`.
+  - [x] `backend_last_ack_seq`.
+  - [x] `pending_samples`.
+  - [x] `battery_percent`.
+  - [x] `storage_free_mb`.
+  - [x] `effective_hz`.
+- [x] Buat `control.proto`.
+- [x] Definisikan command backend ke phone:
+  - [x] `START_SESSION`.
+  - [x] `STOP_SESSION`.
+  - [x] `SYNC_CLOCK`.
+  - [x] `SYNC_REQUIRED`.
+  - [x] `PING`.
 - [ ] Generate Protobuf code untuk:
-  - [ ] Dart/Flutter.
-  - [ ] Python/FastAPI.
-- [ ] Tambahkan dokumentasi versi Protobuf:
-  - [ ] `schema_version`.
-  - [ ] backward compatibility policy.
+  - [x] Dart/Flutter.
+  - [x] Python/FastAPI.
+- [x] Tambahkan dokumentasi versi Protobuf:
+  - [x] `schema_version`.
+  - [x] backward compatibility policy.
+
+### Phase 1 Notes
+
+- Lokasi kontrak: `proto/`.
+- Dokumen versi + policy ada di `proto/README.md`.
+- Generate code sudah dijalankan:
+  - Python output: `backend/generated/*_pb2.py`.
+  - Dart output: `mobile-app/lib/generated/*.pb.dart`.
 
 ---
 
 ## Phase 2: Backend Foundation di Laptop
 
-- [ ] Buat project FastAPI.
-- [ ] Buat konfigurasi environment:
-  - [ ] host LAN.
-  - [ ] port REST API.
-  - [ ] port WebSocket.
-  - [ ] storage root SSD.
-  - [ ] webcam device index/path.
-- [ ] Buat app lifecycle:
-  - [ ] startup check.
-  - [ ] storage directory check.
-  - [ ] webcam availability check.
+- [x] Buat project FastAPI.
+- [x] Buat konfigurasi environment:
+  - [x] host LAN.
+  - [x] port REST API.
+  - [x] port WebSocket.
+  - [x] storage root SSD.
+  - [x] webcam device index/path.
+- [-] Buat app lifecycle:
+  - [x] startup check.
+  - [x] storage directory check.
+  - [x] webcam availability check.
   - [ ] graceful shutdown.
-- [ ] Buat session manager in-memory + persistent metadata.
-- [ ] Buat model metadata:
-  - [ ] `Device`.
-  - [ ] `Session`.
-  - [ ] `SessionDevice`.
-  - [ ] `Annotation`.
-  - [ ] `VideoRecording`.
-  - [ ] `PreflightCheck`.
-  - [ ] `FileArtifact`.
-- [ ] Pilih metadata storage:
-  - [ ] SQLite lokal untuk MVP.
-  - [ ] PostgreSQL/TimescaleDB jika nanti butuh query besar.
-- [ ] Buat REST endpoint device:
-  - [ ] `POST /devices/register`.
-  - [ ] `GET /devices`.
-  - [ ] `PATCH /devices/{device_id}`.
-- [ ] Buat REST endpoint session:
-  - [ ] `POST /sessions`.
-  - [ ] `POST /sessions/{session_id}/start`.
-  - [ ] `POST /sessions/{session_id}/stop`.
-  - [ ] `GET /sessions/{session_id}`.
-  - [ ] `GET /sessions/{session_id}/status`.
-  - [ ] `POST /sessions/{session_id}/finalize`.
-- [ ] Buat REST endpoint annotation:
-  - [ ] `POST /sessions/{session_id}/annotations/start`.
-  - [ ] `POST /sessions/{session_id}/annotations/{annotation_id}/stop`.
-  - [ ] `GET /sessions/{session_id}/annotations`.
-  - [ ] `PATCH /annotations/{annotation_id}`.
-  - [ ] `DELETE /annotations/{annotation_id}`.
-- [ ] Buat REST endpoint artifact:
-  - [ ] `GET /sessions/{session_id}/artifacts`.
-  - [ ] `GET /sessions/{session_id}/manifest.json`.
-  - [ ] `GET /sessions/{session_id}/export.zip`.
-- [ ] Buat endpoint health:
-  - [ ] `GET /health`.
-  - [ ] `GET /preflight`.
+- [-] Buat session manager in-memory + persistent metadata.
+- [x] Buat model metadata:
+  - [x] `Device`.
+  - [x] `Session`.
+  - [x] `SessionDevice`.
+  - [x] `Annotation`.
+  - [x] `VideoRecording`.
+  - [x] `PreflightCheck`.
+  - [x] `FileArtifact`.
+- [x] Pilih metadata storage:
+  - [x] SQLite lokal untuk MVP.
+  - [x] PostgreSQL/TimescaleDB jika nanti butuh query besar (sudah disiapkan via `DATABASE_URL`).
+- [x] Buat REST endpoint device:
+  - [x] `POST /devices/register`.
+  - [x] `GET /devices`.
+  - [x] `PATCH /devices/{device_id}`.
+- [x] Buat REST endpoint session:
+  - [x] `POST /sessions`.
+  - [x] `POST /sessions/{session_id}/start`.
+  - [x] `POST /sessions/{session_id}/stop`.
+  - [x] `GET /sessions/{session_id}`.
+  - [x] `GET /sessions/{session_id}/status`.
+  - [x] `POST /sessions/{session_id}/finalize`.
+- [x] Buat REST endpoint annotation:
+  - [x] `POST /sessions/{session_id}/annotations/start`.
+  - [x] `POST /sessions/{session_id}/annotations/{annotation_id}/stop`.
+  - [x] `GET /sessions/{session_id}/annotations`.
+  - [x] `PATCH /annotations/{annotation_id}`.
+  - [x] `DELETE /annotations/{annotation_id}`.
+- [-] Buat REST endpoint artifact:
+  - [x] `GET /sessions/{session_id}/artifacts`.
+  - [-] `GET /sessions/{session_id}/manifest.json`.
+  - [-] `GET /sessions/{session_id}/export.zip`.
+- [x] Buat endpoint health:
+  - [x] `GET /health`.
+  - [x] `GET /preflight`.
+
+### Phase 2 Notes
+
+- Root backend: `backend/`.
+- Entry app: `backend/app/main.py`.
+- Konfigurasi env: `backend/.env.example` + `backend/app/core/config.py`.
+- Session manager: `backend/app/core/session_manager.py`.
+- Metadata model: `backend/app/db/models.py`.
+- Router endpoints: `backend/app/api/routers/`.
+- Status parsial yang masih perlu penyelesaian:
+  - graceful shutdown masih placeholder hook.
+  - artifact `manifest.json` dan `export.zip` belum otomatis diproduksi oleh worker finalization.
+  - session manager sudah enforce state machine, tapi belum ada recovery state lintas restart (akan diperdalam di fase berikutnya).
 
 ---
 
