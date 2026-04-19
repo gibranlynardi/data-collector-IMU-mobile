@@ -6,9 +6,10 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
-from app.db.models import Device, Session as SessionModel
+from app.db.models import Device, Session as SessionModel, SessionDevice
 from app.db.session import SessionLocal
 from generated.sensor_sample_pb2 import SensorBatch
+from app.services.ingest_pipeline import IngestProtocolError, ingest_ws_binary_batch
 from app.services.ws_runtime import ws_runtime
 
 router = APIRouter(tags=["ws"])
@@ -53,10 +54,8 @@ def _extract_hello_payload(raw: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _select_session_id(hello: dict[str, Any], active_session: SessionModel | None) -> str:
-    if hello.get("session_id"):
-        return str(hello["session_id"])
-    return active_session.session_id if active_session else ""
+def _select_session_id(hello: dict[str, Any]) -> str:
+    return str(hello.get("session_id", ""))
 
 
 async def _perform_handshake(websocket: WebSocket, device_id: str, db: Session) -> DeviceConnectionContext | None:
@@ -80,8 +79,7 @@ async def _perform_handshake(websocket: WebSocket, device_id: str, db: Session) 
         await websocket.close(code=1008)
         return None
 
-    active_session = _get_active_session(db)
-    bound_session_id = _select_session_id(hello, active_session)
+    bound_session_id = _select_session_id(hello)
     if not _match_pattern(bound_session_id, SESSION_ID_PATTERN):
         await _send_ws_error(
             websocket,
@@ -91,10 +89,47 @@ async def _perform_handshake(websocket: WebSocket, device_id: str, db: Session) 
         await websocket.close(code=1008)
         return None
 
-    _ensure_session_device(db, bound_session_id, device_id)
+    session = db.get(SessionModel, bound_session_id)
+    if not session:
+        await _send_ws_error(websocket, code="SESSION_NOT_FOUND", detail="session tidak ditemukan")
+        await websocket.close(code=1008)
+        return None
+    if session.status != "RUNNING":
+        await _send_ws_error(
+            websocket,
+            code="SESSION_NOT_RUNNING",
+            detail=f"session status {session.status} tidak menerima ingest (hanya RUNNING)",
+        )
+        await websocket.close(code=1008)
+        return None
+
+    mapped = (
+        db.query(SessionDevice)
+        .filter(SessionDevice.session_id == bound_session_id, SessionDevice.device_id == device_id)
+        .first()
+    )
+    if not mapped:
+        await _send_ws_error(
+            websocket,
+            code="DEVICE_NOT_IN_SESSION",
+            detail="device tidak tergabung pada session ini",
+        )
+        await websocket.close(code=1008)
+        return None
+
     await ws_runtime.register_device(device_id=device_id, session_id=bound_session_id, websocket=websocket)
 
     role = (device.device_role or str(hello.get("device_role", "other"))).lower()
+    requested_role = str(hello.get("device_role", role)).lower()
+    if requested_role != role:
+        await _send_ws_error(
+            websocket,
+            code="DEVICE_ROLE_MISMATCH",
+            detail=f"device_role mismatch: request={requested_role} registered={role}",
+        )
+        await websocket.close(code=1008)
+        return None
+
     device.connected = True
     if device.device_role != role:
         device.device_role = role
@@ -102,9 +137,7 @@ async def _perform_handshake(websocket: WebSocket, device_id: str, db: Session) 
 
     local_last_seq = int(hello.get("local_last_seq", 0) or 0)
     backend_last_seq = await ws_runtime.get_backend_last_seq(bound_session_id, device_id)
-    session_state = (
-        active_session.status if active_session and active_session.session_id == bound_session_id else "UNKNOWN"
-    )
+    session_state = session.status
 
     return DeviceConnectionContext(
         device_id=device_id,
@@ -167,47 +200,54 @@ async def _ack_batch(
     await _send_json(websocket, ack_payload)
 
 
+async def _ack_batch_with_ingest(
+    websocket: WebSocket,
+    context: DeviceConnectionContext,
+    payload: bytes,
+) -> None:
+    try:
+        ingest_ack = ingest_ws_binary_batch(
+            payload,
+            connection_session_id=context.session_id,
+            connection_device_id=context.device_id,
+            device_role_override=context.role,
+        )
+    except IngestProtocolError as exc:
+        await _send_ws_error(websocket, code=exc.code, detail=exc.detail)
+        return
+
+    batch = SensorBatch()
+    batch.ParseFromString(payload)
+    preview_payload = _build_binary_preview(batch)
+    runtime_ack = await ws_runtime.process_batch(
+        session_id=context.session_id,
+        device_id=context.device_id,
+        start_seq=int(batch.start_seq),
+        end_seq=int(batch.end_seq),
+        sample_count=len(batch.samples),
+        preview_payload=preview_payload,
+        duplicate_override=bool(ingest_ack.get("duplicate", False)),
+        last_received_seq_override=int(ingest_ack.get("last_received_seq", 0) or 0),
+    )
+
+    await _send_json(
+        websocket,
+        {
+            **runtime_ack,
+            "batch_start_seq": int(batch.start_seq),
+            "batch_end_seq": int(batch.end_seq),
+            "last_received_seq": int(ingest_ack.get("last_received_seq", runtime_ack.get("last_received_seq", 0))),
+            "duplicate": bool(ingest_ack.get("duplicate", runtime_ack.get("duplicate", False))),
+        },
+    )
+
+
 async def _handle_binary_message(
     websocket: WebSocket,
     context: DeviceConnectionContext,
     payload: bytes,
 ) -> None:
-    batch = SensorBatch()
-    try:
-        batch.ParseFromString(payload)
-    except Exception:
-        await _send_ws_error(
-            websocket,
-            code="INVALID_PROTOBUF",
-            detail="payload binary tidak bisa diparse sebagai SensorBatch",
-        )
-        return
-
-    if batch.session_id != context.session_id or batch.device_id != context.device_id:
-        await _send_ws_error(
-            websocket,
-            code="SESSION_OR_DEVICE_MISMATCH",
-            detail="session_id atau device_id di batch tidak cocok dengan koneksi",
-        )
-        return
-
-    sample_count = len(batch.samples)
-    if sample_count == 0:
-        await _send_ws_error(
-            websocket,
-            code="EMPTY_BATCH",
-            detail="SensorBatch.samples tidak boleh kosong",
-        )
-        return
-
-    await _ack_batch(
-        websocket,
-        context,
-        start_seq=int(batch.start_seq),
-        end_seq=int(batch.end_seq),
-        sample_count=sample_count,
-        preview_payload=_build_binary_preview(batch),
-    )
+    await _ack_batch_with_ingest(websocket, context, payload)
 
 
 async def _handle_text_message(
@@ -272,36 +312,6 @@ async def _handle_device_message(websocket: WebSocket, context: DeviceConnection
     payload_text = message.get("text")
     if payload_text is not None:
         await _handle_text_message(websocket, context, payload_text)
-
-
-def _get_active_session(db: Session) -> SessionModel | None:
-    return (
-        db.query(SessionModel)
-        .filter(SessionModel.status.in_(["RUNNING", "CREATED", "ENDING", "SYNCING"]))
-        .order_by(SessionModel.created_at.desc())
-        .first()
-    )
-
-
-def _ensure_session_device(db: Session, session_id: str, device_id: str) -> None:
-    from app.db.models import SessionDevice
-
-    existing = (
-        db.query(SessionDevice)
-        .filter(SessionDevice.session_id == session_id, SessionDevice.device_id == device_id)
-        .first()
-    )
-    if existing:
-        return
-
-    db.add(
-        SessionDevice(
-            session_id=session_id,
-            device_id=device_id,
-            required=False,
-        )
-    )
-    db.commit()
 
 
 @router.websocket("/ws/device/{device_id}")
