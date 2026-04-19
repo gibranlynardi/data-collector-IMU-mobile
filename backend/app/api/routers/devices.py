@@ -39,7 +39,7 @@ def list_devices(db: DBSession) -> list[DeviceResponse]:
     return db.query(Device).order_by(Device.device_id.asc()).all()
 
 
-@router.patch("/{device_id}")
+@router.patch("/{device_id}", responses={404: {"description": "Device not found"}})
 def patch_device(device_id: Annotated[str, Path(pattern=DEVICE_ID_PATTERN)], payload: DevicePatchRequest, db: DBSession) -> DeviceResponse:
     device = db.get(Device, device_id)
     if not device:
