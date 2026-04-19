@@ -269,58 +269,64 @@ Roadmap ini mengikuti arsitektur terbaru:
 
 ## Phase 5: Webcam Auto Recording
 
-- [ ] Pilih implementasi webcam recorder:
-  - [ ] OpenCV Python untuk MVP.
+- [x] Pilih implementasi webcam recorder:
+  - [x] OpenCV Python untuk MVP.
   - [ ] FFmpeg subprocess jika butuh performa/stabilitas lebih baik.
-- [ ] Buat `VideoRecorderService`.
-- [ ] Deteksi webcam:
-  - [ ] camera index.
-  - [ ] resolution.
-  - [ ] fps.
-  - [ ] codec support.
-- [ ] Tambahkan preflight webcam:
-  - [ ] webcam connected.
-  - [ ] preview frame berhasil.
-  - [ ] fps mencukupi.
-  - [ ] storage cukup.
-- [ ] Saat `START_SESSION`:
-  - [ ] mulai video recording otomatis.
-  - [ ] catat `video_start_server_time`.
-  - [ ] catat `video_start_monotonic_ms`.
-  - [ ] simpan video ke SSD.
-- [ ] Saat `STOP_SESSION`:
-  - [ ] stop video recording otomatis.
-  - [ ] flush/close file video.
-  - [ ] catat `video_end_server_time`.
-- [ ] Format file video:
+- [x] Buat `VideoRecorderService`.
+- [x] Deteksi webcam:
+  - [x] camera index.
+  - [x] resolution.
+  - [x] fps.
+  - [x] codec support.
+- [x] Tambahkan preflight webcam:
+  - [x] webcam connected.
+  - [x] preview frame berhasil.
+  - [x] fps mencukupi.
+  - [x] storage cukup.
+- [x] Saat `START_SESSION`:
+  - [x] mulai video recording otomatis.
+  - [x] catat `video_start_server_time`.
+  - [x] catat `video_start_monotonic_ms`.
+  - [x] simpan video ke SSD.
+- [x] Saat `STOP_SESSION`:
+  - [x] stop video recording otomatis.
+  - [x] flush/close file video.
+  - [x] catat `video_end_server_time`.
+- [x] Format file video:
   ```text
   sessions/{session_id}/video/{session_id}_webcam.mp4
   ```
-- [ ] Tambahkan sidecar metadata:
+- [x] Tambahkan sidecar metadata:
   ```text
   sessions/{session_id}/video/{session_id}_webcam.json
   ```
-- [ ] Isi sidecar metadata video:
-  - [ ] `session_id`.
-  - [ ] `camera_id`.
-  - [ ] `fps`.
-  - [ ] `width`.
-  - [ ] `height`.
-  - [ ] `codec`.
-  - [ ] `video_start_server_time`.
-  - [ ] `video_end_server_time`.
-  - [ ] `duration_ms`.
-  - [ ] `frame_count`.
-  - [ ] `dropped_frame_estimate`.
-- [ ] Dashboard harus menampilkan:
-  - [ ] webcam connected/disconnected.
-  - [ ] video recording on/off.
-  - [ ] elapsed video time.
-  - [ ] video file path.
-- [ ] Tangani failure video:
-  - [ ] jika webcam tidak tersedia, session start diblokir kecuali operator override.
-  - [ ] jika video recorder gagal saat session berjalan, dashboard beri warning besar.
-  - [ ] session tetap bisa dilanjutkan atau dihentikan sesuai keputusan operator.
+- [x] Isi sidecar metadata video:
+  - [x] `session_id`.
+  - [x] `camera_id`.
+  - [x] `fps`.
+  - [x] `width`.
+  - [x] `height`.
+  - [x] `codec`.
+  - [x] `video_start_server_time`.
+  - [x] `video_end_server_time`.
+  - [x] `duration_ms`.
+  - [x] `frame_count`.
+  - [x] `dropped_frame_estimate`.
+- [x] Dashboard harus menampilkan:
+  - [x] webcam connected/disconnected.
+  - [x] video recording on/off.
+  - [x] elapsed video time.
+  - [x] video file path.
+- [x] Tangani failure video:
+  - [x] jika webcam tidak tersedia, session start diblokir kecuali operator override.
+  - [x] jika video recorder gagal saat session berjalan, dashboard beri warning besar.
+  - [x] session tetap bisa dilanjutkan atau dihentikan sesuai keputusan operator.
+
+### Phase 5 Notes
+
+- Recorder runtime ada di `backend/app/services/video_recorder.py`.
+- API status untuk dashboard: `GET /sessions/{session_id}/video/status`.
+- Preflight websocket tetap via `GET /preflight` dengan field webcam detail baru.
 
 ---
 
@@ -363,7 +369,7 @@ Roadmap ini mengikuti arsitektur terbaru:
 
 ## Phase 7: Dashboard Browser
 
-- [ ] Buat dashboard frontend dengan next-js.
+- [ ] Buat dashboard frontend dengan next-js pakai shadcdn-ui dan poppins font.
 - [ ] Buat layout utama:
   - [ ] session header.
   - [ ] elapsed timer.
@@ -640,7 +646,7 @@ Roadmap ini mengikuti arsitektur terbaru:
   scripts/upload_to_fams.sh
   ```
 - [ ] Script upload memakai:
-  - [ ] `scp` atau `rsync`.
+  - [ ] `rsync`.
   - [ ] checksum sebelum/sesudah upload.
   - [ ] resume jika upload gagal, jika memakai `rsync`.
 - [ ] Dashboard tampilkan instruksi upload:
