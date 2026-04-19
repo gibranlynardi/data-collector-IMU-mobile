@@ -47,3 +47,15 @@ python -m grpc_tools.protoc \
 - Kontrak Proto sudah dibuat.
 - Generate code Python sudah ada di `backend/generated/`.
 - Generate code Dart sudah ada di `mobile-app/lib/generated/`.
+
+## WS framing policy (official)
+
+- Official transport untuk data dan control adalah **binary Protobuf**.
+  - Sensor stream: `SensorBatch` (binary frame).
+  - Control command backend -> phone: `ControlCommand` (binary frame).
+- JSON text dipertahankan untuk kebutuhan berikut:
+  - handshake (`HELLO` / `HELLO_ACK`),
+  - heartbeat,
+  - backward compatibility saat rollout mobile node,
+  - debug messages.
+- Implementasi baru harus mengutamakan binary Protobuf untuk command control.

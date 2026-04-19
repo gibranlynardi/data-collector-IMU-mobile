@@ -16,7 +16,8 @@ dependencies = [
 
 [project.optional-dependencies]
 video = [
-  "opencv-python>=4.10.0"
+  "opencv-python>=4.10.0",
+  "deface>=1.6.1"
 ]
 
 [tool.uv]

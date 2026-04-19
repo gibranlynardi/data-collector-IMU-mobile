@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rcontrol.proto\x12\x10imu.collector.v1\"\x8b\x02\n\x0e\x43ontrolCommand\x12\x35\n\x07\x63ommand\x18\x01 \x01(\x0e\x32$.imu.collector.v1.ControlCommandType\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12 \n\x18issued_at_server_unix_ns\x18\x03 \x01(\x04\x12\x16\n\x0eschema_version\x18\x04 \x01(\t\x12\x1a\n\x12target_sampling_hz\x18\n \x01(\r\x12\x1b\n\x13recording_start_seq\x18\x0b \x01(\x04\x12!\n\x19server_start_time_unix_ns\x18\x0c \x01(\x04\x12\x18\n\x10\x62\x61\x63kend_last_seq\x18\r \x01(\x04*\x8c\x01\n\x12\x43ontrolCommandType\x12$\n CONTROL_COMMAND_TYPE_UNSPECIFIED\x10\x00\x12\x11\n\rSTART_SESSION\x10\x01\x12\x10\n\x0cSTOP_SESSION\x10\x02\x12\x0e\n\nSYNC_CLOCK\x10\x03\x12\x11\n\rSYNC_REQUIRED\x10\x04\x12\x08\n\x04PING\x10\x05\x42S\n\x19\x63om.fams.imu.collector.v1P\x01Z\x1cimu/collector/v1;collectorv1\xaa\x02\x15\x46\x61ms.Imu.Collector.V1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rcontrol.proto\x12\x10imu.collector.v1\"\xb2\x03\n\x0e\x43ontrolCommand\x12\x35\n\x07\x63ommand\x18\x01 \x01(\x0e\x32$.imu.collector.v1.ControlCommandType\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12 \n\x18issued_at_server_unix_ns\x18\x03 \x01(\x04\x12\x16\n\x0eschema_version\x18\x04 \x01(\t\x12\x1a\n\x12target_sampling_hz\x18\n \x01(\r\x12\x1b\n\x13recording_start_seq\x18\x0b \x01(\x04\x12!\n\x19server_start_time_unix_ns\x18\x0c \x01(\x04\x12\x18\n\x10\x62\x61\x63kend_last_seq\x18\r \x01(\x04\x12\x12\n\ncommand_id\x18\x0e \x01(\t\x12\x0b\n\x03\x61\x63k\x18\x0f \x01(\x08\x12\x16\n\x0e\x64\x65vice_unix_ns\x18\x10 \x01(\x04\x12\x17\n\x0f\x62\x61tch_start_seq\x18\x11 \x01(\x04\x12\x15\n\rbatch_end_seq\x18\x12 \x01(\x04\x12\x19\n\x11\x64uplicate_batches\x18\x13 \x01(\x04\x12\x11\n\tduplicate\x18\x14 \x01(\x08\x12\x0e\n\x06\x64\x65tail\x18\x15 \x01(\t*\xaa\x01\n\x12\x43ontrolCommandType\x12$\n CONTROL_COMMAND_TYPE_UNSPECIFIED\x10\x00\x12\x11\n\rSTART_SESSION\x10\x01\x12\x10\n\x0cSTOP_SESSION\x10\x02\x12\x0e\n\nSYNC_CLOCK\x10\x03\x12\x11\n\rSYNC_REQUIRED\x10\x04\x12\x08\n\x04PING\x10\x05\x12\x07\n\x03\x41\x43K\x10\x06\x12\x13\n\x0f\x43LOCK_SYNC_PONG\x10\x07\x42S\n\x19\x63om.fams.imu.collector.v1P\x01Z\x1cimu/collector/v1;collectorv1\xaa\x02\x15\x46\x61ms.Imu.Collector.V1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,8 +32,8 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'control_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\031com.fams.imu.collector.v1P\001Z\034imu/collector/v1;collectorv1\252\002\025Fams.Imu.Collector.V1'
-  _globals['_CONTROLCOMMANDTYPE']._serialized_start=306
-  _globals['_CONTROLCOMMANDTYPE']._serialized_end=446
+  _globals['_CONTROLCOMMANDTYPE']._serialized_start=473
+  _globals['_CONTROLCOMMANDTYPE']._serialized_end=643
   _globals['_CONTROLCOMMAND']._serialized_start=36
-  _globals['_CONTROLCOMMAND']._serialized_end=303
+  _globals['_CONTROLCOMMAND']._serialized_end=470
 # @@protoc_insertion_point(module_scope)

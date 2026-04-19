@@ -14,6 +14,8 @@ enum ControlCommandType {
   SYNC_CLOCK = 3;
   SYNC_REQUIRED = 4;
   PING = 5;
+  ACK = 6;
+  CLOCK_SYNC_PONG = 7;
 }
 
 message ControlCommand {
@@ -27,4 +29,12 @@ message ControlCommand {
   uint64 recording_start_seq = 11;
   uint64 server_start_time_unix_ns = 12;
   uint64 backend_last_seq = 13;
+  string command_id = 14;
+  bool ack = 15;
+  uint64 device_unix_ns = 16;
+  uint64 batch_start_seq = 17;
+  uint64 batch_end_seq = 18;
+  uint64 duplicate_batches = 19;
+  bool duplicate = 20;
+  string detail = 21;
 }

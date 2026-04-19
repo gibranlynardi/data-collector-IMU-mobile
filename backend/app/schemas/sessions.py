@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.schemas.common import SessionId
+from app.schemas.common import DeviceId, DeviceRole, SessionId
 
 
 class SessionCreateRequest(BaseModel):
@@ -31,3 +31,26 @@ class SessionResponse(BaseModel):
 class SessionStatusResponse(BaseModel):
     session_id: SessionId
     status: str
+
+
+class SessionDeviceAssignItem(BaseModel):
+    device_id: DeviceId
+    required: bool = True
+
+
+class SessionDeviceAssignRequest(BaseModel):
+    assignments: list[SessionDeviceAssignItem]
+    replace: bool = True
+
+
+class SessionDeviceBindingResponse(BaseModel):
+    device_id: DeviceId
+    device_role: DeviceRole
+    required: bool
+    connected: bool
+
+
+class SessionDeviceAssignmentResponse(BaseModel):
+    session_id: SessionId
+    required_roles: list[DeviceRole]
+    bindings: list[SessionDeviceBindingResponse]

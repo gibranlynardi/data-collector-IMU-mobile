@@ -226,138 +226,157 @@ Roadmap ini mengikuti arsitektur terbaru:
 
 ## Phase 4: Backend CSV Writer Per Device
 
-- [ ] Buat writer service untuk setiap `(session_id, device_id)`.
-- [ ] Saat session start, buat CSV file per device:
+- [x] Buat writer service untuk setiap `(session_id, device_id)`.
+- [x] Saat session start, buat CSV file per device:
   ```text
   sessions/{session_id}/sensor/{device_role}_{device_id}.csv
   ```
-- [ ] Header CSV final:
+- [x] Header CSV final:
   ```text
   session_id,device_id,device_role,seq,timestamp_device_unix_ns,timestamp_server_unix_ns,estimated_server_unix_ns,elapsed_ms,acc_x_g,acc_y_g,acc_z_g,gyro_x_deg,gyro_y_deg,gyro_z_deg
   ```
-- [ ] Writer harus append-only.
-- [ ] Writer harus flush berkala:
-  - [ ] flush per N sample.
-  - [ ] flush per N detik.
-  - [ ] flush saat stop session.
-- [ ] Tambahkan file lock/state supaya crash recovery bisa tahu CSV terakhir.
-- [ ] Tambahkan index/summary per device:
-  - [ ] first seq.
-  - [ ] last seq.
-  - [ ] sample count.
-  - [ ] missing seq ranges.
-  - [ ] effective Hz.
-- [ ] Pastikan duplicate sample tidak ditulis ulang:
-  - [ ] track last seq per device.
-  - [ ] skip duplicate seq.
-  - [ ] log gap jika seq lompat.
-- [ ] Tambahkan opsi raw binary archive:
-  - [ ] simpan Protobuf batch mentah untuk audit/debug.
-  - [ ] optional, bisa setelah MVP.
+- [x] Writer harus append-only.
+- [x] Writer harus flush berkala:
+  - [x] flush per N sample.
+  - [x] flush per N detik.
+  - [x] flush saat stop session.
+- [x] Tambahkan file lock/state supaya crash recovery bisa tahu CSV terakhir.
+- [x] Tambahkan index/summary per device:
+  - [x] first seq.
+  - [x] last seq.
+  - [x] sample count.
+  - [x] missing seq ranges.
+  - [x] effective Hz.
+- [x] Pastikan duplicate sample tidak ditulis ulang:
+  - [x] track last seq per device.
+  - [x] skip duplicate seq.
+  - [x] log gap jika seq lompat.
+- [x] Tambahkan opsi raw binary archive:
+  - [x] simpan Protobuf batch mentah untuk audit/debug.
+  - [x] optional, bisa setelah MVP.
+
+### Phase 4 Notes
+
+- Service writer: `backend/app/services/csv_writer.py`.
+- Integrasi lifecycle:
+  - session start menyiapkan writer per device.
+  - session stop melakukan flush + close writer + generate summary.
+- Endpoint ingest MVP: `POST /sessions/{session_id}/ingest/sensor-batch` untuk menulis batch JSON ke CSV.
 
 ---
 
 ## Phase 5: Webcam Auto Recording
 
-- [ ] Pilih implementasi webcam recorder:
-  - [ ] OpenCV Python untuk MVP.
-  - [ ] FFmpeg subprocess jika butuh performa/stabilitas lebih baik.
-- [ ] Buat `VideoRecorderService`.
-- [ ] Deteksi webcam:
-  - [ ] camera index.
-  - [ ] resolution.
-  - [ ] fps.
-  - [ ] codec support.
-- [ ] Tambahkan preflight webcam:
-  - [ ] webcam connected.
-  - [ ] preview frame berhasil.
-  - [ ] fps mencukupi.
-  - [ ] storage cukup.
-- [ ] Saat `START_SESSION`:
-  - [ ] mulai video recording otomatis.
-  - [ ] catat `video_start_server_time`.
-  - [ ] catat `video_start_monotonic_ms`.
-  - [ ] simpan video ke SSD.
-- [ ] Saat `STOP_SESSION`:
-  - [ ] stop video recording otomatis.
-  - [ ] flush/close file video.
-  - [ ] catat `video_end_server_time`.
-- [ ] Format file video:
+- [x] Pilih implementasi webcam recorder:
+  - [x] OpenCV Python untuk MVP.
+  - [x] FFmpeg subprocess jika butuh performa/stabilitas lebih baik.
+- [x] Buat `VideoRecorderService`.
+- [x] Deteksi webcam:
+  - [x] camera index.
+  - [x] resolution.
+  - [x] fps.
+  - [x] codec support.
+- [x] Tambahkan preflight webcam:
+  - [x] webcam connected.
+  - [x] preview frame berhasil.
+  - [x] fps mencukupi.
+  - [x] storage cukup.
+- [x] Saat `START_SESSION`:
+  - [x] mulai video recording otomatis.
+  - [x] catat `video_start_server_time`.
+  - [x] catat `video_start_monotonic_ms`.
+  - [x] simpan video ke SSD.
+- [x] Saat `STOP_SESSION`:
+  - [x] stop video recording otomatis.
+  - [x] flush/close file video.
+  - [x] catat `video_end_server_time`.
+- [x] Format file video:
   ```text
   sessions/{session_id}/video/{session_id}_webcam.mp4
   ```
-- [ ] Tambahkan sidecar metadata:
+- [x] Tambahkan sidecar metadata:
   ```text
   sessions/{session_id}/video/{session_id}_webcam.json
   ```
-- [ ] Isi sidecar metadata video:
-  - [ ] `session_id`.
-  - [ ] `camera_id`.
-  - [ ] `fps`.
-  - [ ] `width`.
-  - [ ] `height`.
-  - [ ] `codec`.
-  - [ ] `video_start_server_time`.
-  - [ ] `video_end_server_time`.
-  - [ ] `duration_ms`.
-  - [ ] `frame_count`.
-  - [ ] `dropped_frame_estimate`.
-- [ ] Dashboard harus menampilkan:
-  - [ ] webcam connected/disconnected.
-  - [ ] video recording on/off.
-  - [ ] elapsed video time.
-  - [ ] video file path.
-- [ ] Tangani failure video:
-  - [ ] jika webcam tidak tersedia, session start diblokir kecuali operator override.
-  - [ ] jika video recorder gagal saat session berjalan, dashboard beri warning besar.
-  - [ ] session tetap bisa dilanjutkan atau dihentikan sesuai keputusan operator.
-- [ ] Integrasi deface untuk auto anonim muka di video anotasi
+- [x] Isi sidecar metadata video:
+  - [x] `session_id`.
+  - [x] `camera_id`.
+  - [x] `fps`.
+  - [x] `width`.
+  - [x] `height`.
+  - [x] `codec`.
+  - [x] `video_start_server_time`.
+  - [x] `video_end_server_time`.
+  - [x] `duration_ms`.
+  - [x] `frame_count`.
+  - [x] `dropped_frame_estimate`.
+- [x] Dashboard harus menampilkan:
+  - [x] webcam connected/disconnected.
+  - [x] video recording on/off.
+  - [x] elapsed video time.
+  - [x] video file path.
+- [x] Tangani failure video:
+  - [x] jika webcam tidak tersedia, session start diblokir kecuali operator override.
+  - [x] jika video recorder gagal saat session berjalan, dashboard beri warning besar.
+  - [x] session tetap bisa dilanjutkan atau dihentikan sesuai keputusan operator.
+
+- [x] Integrasi deface untuk auto anonim muka di video anotasi
+
+### Phase 5 Notes
+
+- Recorder runtime ada di `backend/app/services/video_recorder.py`.
+- API status untuk dashboard: `GET /sessions/{session_id}/video/status`.
+- API sidecar metadata untuk dashboard:
+  - `GET /sessions/{session_id}/video/metadata`
+  - `GET /sessions/{session_id}/video/metadata/download`
+- Preflight websocket tetap via `GET /preflight` dengan field webcam detail baru.
 
 ---
 
 ## Phase 6: Clock Sync dan Sinkronisasi Video-Sensor
 
-- [ ] Backend menjadi time authority untuk session.
-- [ ] Saat preflight, lakukan clock sync ke semua phone:
-  - [ ] ping/pong beberapa kali.
-  - [ ] hitung latency.
-  - [ ] hitung `clock_offset_ms`.
-  - [ ] simpan kualitas sync per device.
-- [ ] Saat start, backend broadcast:
-  - [ ] `session_id`.
-  - [ ] `server_start_time_unix_ns`.
-  - [ ] `recording_start_seq = 1`.
-  - [ ] target `sampling_hz = 100`.
+- [x] Backend menjadi time authority untuk session.
+- [x] Saat preflight, lakukan clock sync ke semua phone:
+  - [x] ping/pong beberapa kali.
+  - [x] hitung latency.
+  - [x] hitung `clock_offset_ms`.
+  - [x] simpan kualitas sync per device.
+- [x] Saat start, backend broadcast:
+  - [x] `session_id`.
+  - [x] `server_start_time_unix_ns`.
+  - [x] `recording_start_seq = 1`.
+  - [x] target `sampling_hz = 100`.
 - [ ] Phone menyimpan:
   - [ ] `device_start_time`.
   - [ ] `monotonic_start_ms`.
   - [ ] `server_start_time_unix_ns`.
-- [ ] Tiap sample menyertakan:
-  - [ ] `elapsed_ms`.
-  - [ ] `timestamp_device_unix_ns`.
-- [ ] Backend menghitung:
+- [x] Tiap sample menyertakan:
+  - [x] `elapsed_ms`.
+  - [x] `timestamp_device_unix_ns`.
+- [x] Backend menghitung:
   ```text
   estimated_server_time = server_start_time + elapsed_ms
   ```
-- [ ] Video recorder memakai server monotonic time yang sama.
-- [ ] Simpan sync report:
-  - [ ] offset per device.
-  - [ ] latency min/median/max.
-  - [ ] sync quality.
-  - [ ] video start offset terhadap session start.
-- [ ] Dashboard tampilkan clock sync quality:
-  - [ ] green: good.
-  - [ ] yellow: warning.
-  - [ ] red: bad, start diblokir atau butuh override.
+- [x] Video recorder memakai server monotonic time yang sama.
+- [x] Simpan sync report:
+  - [x] offset per device.
+  - [x] latency min/median/max.
+  - [x] sync quality.
+  - [x] video start offset terhadap session start.
+- [x] Dashboard tampilkan clock sync quality:
+  - [x] green: good.
+  - [x] yellow: warning.
+  - [x] red: bad, start diblokir atau butuh override.
 
 ---
 
 ## Phase 7: Dashboard Browser
 
-- [ ] Buat dashboard frontend dengan next-js.
+- [ ] Buat dashboard frontend dengan next-js pakai shadcdn-ui dan poppins font.
 - [ ] Buat layout utama:
   - [ ] session header.
   - [ ] elapsed timer.
+  - [ ] countdown barrier start realtime menuju `start_at_unix_ns`.
   - [ ] device health cards.
   - [ ] webcam status card.
   - [ ] realtime graph area.
@@ -407,6 +426,12 @@ Roadmap ini mengikuti arsitektur terbaru:
   - [ ] recording indicator.
   - [ ] elapsed video time.
   - [ ] dropped frame warning jika tersedia.
+  - [ ] toggle `Anonymize video` (Yes/No), default `No` (tidak otomatis).
+  - [ ] tombol `Anonymize Now` untuk trigger manual proses anonymize.
+  - [ ] saat toggle `Yes`, saat stop/finalize tampilkan konfirmasi jalankan anonymize.
+  - [ ] panggil API `POST /sessions/{session_id}/video/anonymize` hanya jika toggle `Yes` atau tombol manual ditekan.
+  - [ ] tampilkan progress/status anonymize: pending/running/completed/failed.
+  - [ ] tampilkan path output anonymized video + metadata setelah selesai.
 - [ ] Buat artifact panel:
   - [ ] CSV per device.
   - [ ] video file.
@@ -417,6 +442,15 @@ Roadmap ini mengikuti arsitektur terbaru:
 ---
 
 ## Phase 8: Flutter Mobile Node Refactor
+
+- [ ] Tutup gap arsitektur mobile agar sesuai Wi-Fi WebSocket `100 Hz` (blocker MVP end-to-end):
+  - [ ] hentikan dependensi jalur utama Bluetooth parser untuk mode koleksi utama.
+  - [ ] buat connection manager ke endpoint `/ws/device/{device_id}`.
+  - [ ] dukung command control dari backend: `START_SESSION`, `STOP_SESSION`, `CLOCK_SYNC`.
+  - [ ] ubah sensor ticker default ke target sampling `100 Hz` stabil.
+  - [ ] simpan data lokal durable sebelum upload (SQLite/local queue).
+  - [ ] upload `SensorBatch` Protobuf via Wi-Fi dengan retry + resume.
+  - [ ] verifikasi flow end-to-end phone sebagai IMU node Wi-Fi hingga backend ingest.
 
 - [ ] Update dependency Flutter:
   - [ ] `web_socket_channel`.
@@ -631,7 +665,7 @@ Roadmap ini mengikuti arsitektur terbaru:
   scripts/upload_to_fams.sh
   ```
 - [ ] Script upload memakai:
-  - [ ] `scp` atau `rsync`.
+  - [ ] `rsync`.
   - [ ] checksum sebelum/sesudah upload.
   - [ ] resume jika upload gagal, jika memakai `rsync`.
 - [ ] Dashboard tampilkan instruksi upload:
