@@ -1,0 +1,384 @@
+import json
+import re
+from dataclasses import dataclass
+from typing import Any
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from sqlalchemy.orm import Session
+
+from app.db.models import Device, Session as SessionModel
+from app.db.session import SessionLocal
+from generated.sensor_sample_pb2 import SensorBatch
+from app.services.ws_runtime import ws_runtime
+
+router = APIRouter(tags=["ws"])
+DEVICE_ID_PATTERN = r"^DEVICE-(CHEST|WAIST|THIGH|OTHER)-\d{3}$"
+SESSION_ID_PATTERN = r"^\d{8}_\d{6}_[A-F0-9]{8}$"
+
+
+def _match_pattern(value: str, pattern: str) -> bool:
+    return bool(re.fullmatch(pattern, value))
+
+
+@dataclass
+class DeviceConnectionContext:
+    device_id: str
+    session_id: str
+    role: str
+    session_state: str
+    local_last_seq: int
+    backend_last_seq: int
+
+
+async def _send_json(websocket: WebSocket, payload: dict[str, Any]) -> None:
+    await websocket.send_text(json.dumps(payload, ensure_ascii=True))
+
+
+async def _send_ws_error(websocket: WebSocket, code: str, detail: str) -> None:
+    await _send_json(
+        websocket,
+        {
+            "type": "ERROR",
+            "code": code,
+            "detail": detail,
+        },
+    )
+
+
+def _extract_hello_payload(raw: str) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _select_session_id(hello: dict[str, Any], active_session: SessionModel | None) -> str:
+    if hello.get("session_id"):
+        return str(hello["session_id"])
+    return active_session.session_id if active_session else ""
+
+
+async def _perform_handshake(websocket: WebSocket, device_id: str, db: Session) -> DeviceConnectionContext | None:
+    hello_raw = await websocket.receive_text()
+    hello = _extract_hello_payload(hello_raw)
+    if hello is None:
+        await websocket.close(code=1003)
+        return None
+
+    if hello.get("type") != "HELLO" or str(hello.get("device_id", "")) != device_id:
+        await websocket.close(code=1008)
+        return None
+
+    device = db.get(Device, device_id)
+    if not device:
+        await _send_ws_error(
+            websocket,
+            code="DEVICE_NOT_REGISTERED",
+            detail="device belum terdaftar, lakukan POST /devices/register dulu",
+        )
+        await websocket.close(code=1008)
+        return None
+
+    active_session = _get_active_session(db)
+    bound_session_id = _select_session_id(hello, active_session)
+    if not _match_pattern(bound_session_id, SESSION_ID_PATTERN):
+        await _send_ws_error(
+            websocket,
+            code="SESSION_REQUIRED",
+            detail="session_id wajib valid untuk koneksi device",
+        )
+        await websocket.close(code=1008)
+        return None
+
+    _ensure_session_device(db, bound_session_id, device_id)
+    await ws_runtime.register_device(device_id=device_id, session_id=bound_session_id, websocket=websocket)
+
+    role = (device.device_role or str(hello.get("device_role", "other"))).lower()
+    device.connected = True
+    if device.device_role != role:
+        device.device_role = role
+    db.commit()
+
+    local_last_seq = int(hello.get("local_last_seq", 0) or 0)
+    backend_last_seq = await ws_runtime.get_backend_last_seq(bound_session_id, device_id)
+    session_state = (
+        active_session.status if active_session and active_session.session_id == bound_session_id else "UNKNOWN"
+    )
+
+    return DeviceConnectionContext(
+        device_id=device_id,
+        session_id=bound_session_id,
+        role=role,
+        session_state=session_state,
+        local_last_seq=local_last_seq,
+        backend_last_seq=backend_last_seq,
+    )
+
+
+async def _send_hello_ack(websocket: WebSocket, context: DeviceConnectionContext) -> None:
+    await _send_json(
+        websocket,
+        {
+            "type": "HELLO_ACK",
+            "device_id": context.device_id,
+            "device_role": context.role,
+            "session_id": context.session_id,
+            "session_state": context.session_state,
+            "local_last_seq": context.local_last_seq,
+            "backend_last_seq": context.backend_last_seq,
+        },
+    )
+
+
+def _build_binary_preview(batch: SensorBatch) -> dict[str, Any]:
+    last = batch.samples[-1]
+    return {
+        "sample_count": len(batch.samples),
+        "last_sample": {
+            "seq": int(last.seq),
+            "elapsed_ms": int(last.elapsed_ms),
+            "acc_x_g": float(last.acc_x_g),
+            "acc_y_g": float(last.acc_y_g),
+            "acc_z_g": float(last.acc_z_g),
+            "gyro_x_deg": float(last.gyro_x_deg),
+            "gyro_y_deg": float(last.gyro_y_deg),
+            "gyro_z_deg": float(last.gyro_z_deg),
+        },
+    }
+
+
+async def _ack_batch(
+    websocket: WebSocket,
+    context: DeviceConnectionContext,
+    start_seq: int,
+    end_seq: int,
+    sample_count: int,
+    preview_payload: dict[str, Any],
+) -> None:
+    ack_payload = await ws_runtime.process_batch(
+        session_id=context.session_id,
+        device_id=context.device_id,
+        start_seq=start_seq,
+        end_seq=end_seq,
+        sample_count=sample_count,
+        preview_payload=preview_payload,
+    )
+    await _send_json(websocket, ack_payload)
+
+
+async def _handle_binary_message(
+    websocket: WebSocket,
+    context: DeviceConnectionContext,
+    payload: bytes,
+) -> None:
+    batch = SensorBatch()
+    try:
+        batch.ParseFromString(payload)
+    except Exception:
+        await _send_ws_error(
+            websocket,
+            code="INVALID_PROTOBUF",
+            detail="payload binary tidak bisa diparse sebagai SensorBatch",
+        )
+        return
+
+    if batch.session_id != context.session_id or batch.device_id != context.device_id:
+        await _send_ws_error(
+            websocket,
+            code="SESSION_OR_DEVICE_MISMATCH",
+            detail="session_id atau device_id di batch tidak cocok dengan koneksi",
+        )
+        return
+
+    sample_count = len(batch.samples)
+    if sample_count == 0:
+        await _send_ws_error(
+            websocket,
+            code="EMPTY_BATCH",
+            detail="SensorBatch.samples tidak boleh kosong",
+        )
+        return
+
+    await _ack_batch(
+        websocket,
+        context,
+        start_seq=int(batch.start_seq),
+        end_seq=int(batch.end_seq),
+        sample_count=sample_count,
+        preview_payload=_build_binary_preview(batch),
+    )
+
+
+async def _handle_text_message(
+    websocket: WebSocket,
+    context: DeviceConnectionContext,
+    payload_text: str,
+) -> None:
+    payload = _extract_hello_payload(payload_text)
+    if payload is None:
+        await _send_ws_error(
+            websocket,
+            code="INVALID_JSON",
+            detail="message text bukan JSON valid",
+        )
+        return
+
+    msg_type = str(payload.get("type", ""))
+    if msg_type == "HEARTBEAT":
+        await ws_runtime.touch_heartbeat(context.session_id, context.device_id)
+        await _send_json(
+            websocket,
+            {
+                "type": "HEARTBEAT_ACK",
+                "device_id": context.device_id,
+                "session_id": context.session_id,
+            },
+        )
+        return
+
+    if msg_type == "SENSOR_BATCH_DEBUG":
+        sample_count = int(payload.get("sample_count", 0) or 0)
+        start_seq = int(payload.get("start_seq", 0) or 0)
+        end_seq = int(payload.get("end_seq", 0) or 0)
+        preview = {
+            "sample_count": sample_count,
+            "debug": True,
+            "payload": payload.get("preview", {}),
+        }
+        await _ack_batch(
+            websocket,
+            context,
+            start_seq=start_seq,
+            end_seq=end_seq,
+            sample_count=sample_count,
+            preview_payload=preview,
+        )
+        return
+
+    await _send_ws_error(
+        websocket,
+        code="UNKNOWN_TEXT_MESSAGE",
+        detail="type text message tidak dikenali",
+    )
+
+
+async def _handle_device_message(websocket: WebSocket, context: DeviceConnectionContext, message: dict[str, Any]) -> None:
+    payload_bytes = message.get("bytes")
+    if payload_bytes is not None:
+        await _handle_binary_message(websocket, context, payload_bytes)
+        return
+
+    payload_text = message.get("text")
+    if payload_text is not None:
+        await _handle_text_message(websocket, context, payload_text)
+
+
+def _get_active_session(db: Session) -> SessionModel | None:
+    return (
+        db.query(SessionModel)
+        .filter(SessionModel.status.in_(["RUNNING", "CREATED", "ENDING", "SYNCING"]))
+        .order_by(SessionModel.created_at.desc())
+        .first()
+    )
+
+
+def _ensure_session_device(db: Session, session_id: str, device_id: str) -> None:
+    from app.db.models import SessionDevice
+
+    existing = (
+        db.query(SessionDevice)
+        .filter(SessionDevice.session_id == session_id, SessionDevice.device_id == device_id)
+        .first()
+    )
+    if existing:
+        return
+
+    db.add(
+        SessionDevice(
+            session_id=session_id,
+            device_id=device_id,
+            required=False,
+        )
+    )
+    db.commit()
+
+
+@router.websocket("/ws/device/{device_id}")
+async def ws_device(websocket: WebSocket, device_id: str) -> None:
+    if not _match_pattern(device_id, DEVICE_ID_PATTERN):
+        await websocket.close(code=1008)
+        return
+
+    await websocket.accept()
+    db = SessionLocal()
+    context: DeviceConnectionContext | None = None
+
+    try:
+        context = await _perform_handshake(websocket, device_id, db)
+        if context is None:
+            return
+
+        await _send_hello_ack(websocket, context)
+
+        await ws_runtime.publish_device_event(
+            context.session_id,
+            {
+                "type": "DEVICE_ONLINE",
+                "device_id": context.device_id,
+                "device_role": context.role,
+                "session_id": context.session_id,
+                "backend_last_seq": context.backend_last_seq,
+            },
+        )
+
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+            await _handle_device_message(websocket, context, message)
+
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await ws_runtime.unregister_device(device_id, websocket)
+        with SessionLocal() as state_db:
+            tracked = state_db.get(Device, device_id)
+            if tracked:
+                tracked.connected = False
+                state_db.commit()
+        db.close()
+
+
+@router.websocket("/ws/dashboard/{session_id}")
+async def ws_dashboard(websocket: WebSocket, session_id: str) -> None:
+    if not _match_pattern(session_id, SESSION_ID_PATTERN):
+        await websocket.close(code=1008)
+        return
+
+    connection = await ws_runtime.register_dashboard(session_id=session_id, websocket=websocket)
+    try:
+        snapshot = await ws_runtime.snapshot_for_dashboard(session_id)
+        await connection.queue.put(snapshot)
+        await connection.queue.put(
+            {
+                "type": "VIDEO_RECORDER_STATUS",
+                "session_id": session_id,
+                "status": "idle",
+            }
+        )
+
+        while True:
+            message = await websocket.receive_text()
+            try:
+                payload: dict[str, Any] = json.loads(message)
+            except json.JSONDecodeError:
+                continue
+
+            if payload.get("type") == "PING":
+                await connection.queue.put({"type": "PONG", "session_id": session_id})
+
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await ws_runtime.unregister_dashboard(session_id, connection)

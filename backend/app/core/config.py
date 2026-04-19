@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     webcam_index: int = 0
     webcam_path: str | None = None
 
+    ws_device_timeout_seconds: int = 10
+    ws_dashboard_queue_size: int = 128
+    ws_max_batch_samples: int = 1000
+
     required_device_roles: str = Field(default="chest,waist,thigh")
 
     @property
