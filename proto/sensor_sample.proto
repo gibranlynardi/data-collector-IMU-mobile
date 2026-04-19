@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package imu.collector.v1;
+
+option java_multiple_files = true;
+option java_package = "com.fams.imu.collector.v1";
+option go_package = "imu/collector/v1;collectorv1";
+option csharp_namespace = "Fams.Imu.Collector.V1";
+
+message SensorSample {
+  string session_id = 1;
+  string device_id = 2;
+  string device_role = 3;
+  uint64 seq = 4;
+  uint64 timestamp_device_unix_ns = 5;
+  uint64 elapsed_ms = 6;
+  double acc_x_g = 7;
+  double acc_y_g = 8;
+  double acc_z_g = 9;
+  double gyro_x_deg = 10;
+  double gyro_y_deg = 11;
+  double gyro_z_deg = 12;
+}
+
+message SensorBatch {
+  string session_id = 1;
+  string device_id = 2;
+  uint64 start_seq = 3;
+  uint64 end_seq = 4;
+  repeated SensorSample samples = 5;
+}
