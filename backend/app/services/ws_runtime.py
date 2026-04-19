@@ -3,6 +3,7 @@ import contextlib
 import json
 import logging
 import time
+import uuid
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import Any
@@ -11,8 +12,10 @@ from fastapi import WebSocket
 
 from app.core.config import get_settings
 from app.services.csv_writer import csv_writer_service
+from generated.control_pb2 import ControlCommand, ControlCommandType
 
 logger = logging.getLogger(__name__)
+PROTO_SCHEMA_VERSION = "1.1.0"
 
 
 @dataclass
@@ -41,6 +44,8 @@ class WsRuntime:
         self._dashboard_connections: dict[str, list[DashboardConnection]] = {}
         self._device_states: dict[tuple[str, str], DeviceStreamState] = {}
         self._device_session_map: dict[str, str] = {}
+        self._clock_sync_pending: dict[tuple[str, str, str], asyncio.Future[dict[str, Any]]] = {}
+        self._stop_ack_pending: dict[tuple[str, str, str], asyncio.Future[bool]] = {}
         self._timeout_task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
@@ -62,6 +67,18 @@ class WsRuntime:
             self._device_connections = {}
             self._device_session_map = {}
             self._device_states = {}
+            pending = list(self._clock_sync_pending.values())
+            self._clock_sync_pending = {}
+            stop_pending = list(self._stop_ack_pending.values())
+            self._stop_ack_pending = {}
+
+        for future in pending:
+            if not future.done():
+                future.cancel()
+
+        for future in stop_pending:
+            if not future.done():
+                future.cancel()
 
         for websocket in devices.values():
             with contextlib.suppress(Exception):
@@ -118,6 +135,18 @@ class WsRuntime:
                 self._device_connections.pop(device_id, None)
                 session_id = self._device_session_map.pop(device_id, None)
                 removed = True
+
+                pending_keys = [key for key in self._clock_sync_pending if key[1] == device_id]
+                for key in pending_keys:
+                    future = self._clock_sync_pending.pop(key)
+                    if not future.done():
+                        future.cancel()
+
+                pending_stop_keys = [key for key in self._stop_ack_pending if key[1] == device_id]
+                for key in pending_stop_keys:
+                    future = self._stop_ack_pending.pop(key)
+                    if not future.done():
+                        future.cancel()
 
         if removed and session_id:
             await self.publish_device_event(
@@ -210,6 +239,244 @@ class WsRuntime:
 
     async def publish_device_event(self, session_id: str, payload: dict[str, Any]) -> None:
         await self._broadcast(session_id, payload, drop_if_busy=False)
+
+    async def send_command_to_device(self, session_id: str, device_id: str, payload: dict[str, Any]) -> bool:
+        async with self._lock:
+            websocket = self._device_connections.get(device_id)
+            mapped_session = self._device_session_map.get(device_id)
+
+        if websocket is None or mapped_session != session_id:
+            return False
+
+        try:
+            binary_payload = self._encode_control_command(payload)
+            if binary_payload is not None:
+                await websocket.send_bytes(binary_payload)
+            else:
+                await websocket.send_text(json.dumps(payload, ensure_ascii=True))
+            return True
+        except Exception:
+            return False
+
+    async def broadcast_command_to_session_devices(self, session_id: str, payload: dict[str, Any]) -> list[str]:
+        async with self._lock:
+            candidates = [
+                (device_id, websocket)
+                for device_id, websocket in self._device_connections.items()
+                if self._device_session_map.get(device_id) == session_id
+            ]
+
+        sent: list[str] = []
+        encoded_json = json.dumps(payload, ensure_ascii=True)
+        encoded_binary = self._encode_control_command(payload)
+        for device_id, websocket in candidates:
+            try:
+                if encoded_binary is not None:
+                    await websocket.send_bytes(encoded_binary)
+                else:
+                    await websocket.send_text(encoded_json)
+                sent.append(device_id)
+            except Exception:
+                continue
+        return sent
+
+    async def get_online_device_ids(self, session_id: str) -> list[str]:
+        async with self._lock:
+            return sorted(
+                [
+                    device_id
+                    for device_id in self._device_connections
+                    if self._device_session_map.get(device_id) == session_id
+                ]
+            )
+
+    async def request_clock_sync_probe(self, session_id: str, device_id: str, timeout_seconds: float) -> dict[str, Any] | None:
+        ping_id = uuid.uuid4().hex
+        server_send_unix_ns = time.time_ns()
+
+        async with self._lock:
+            websocket = self._device_connections.get(device_id)
+            mapped_session = self._device_session_map.get(device_id)
+            if websocket is None or mapped_session != session_id:
+                return None
+            future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+            self._clock_sync_pending[(session_id, device_id, ping_id)] = future
+
+        payload = {
+            "type": "CLOCK_SYNC_PING",
+            "session_id": session_id,
+            "device_id": device_id,
+            "ping_id": ping_id,
+            "server_send_unix_ns": server_send_unix_ns,
+        }
+        try:
+            encoded = self._encode_control_command(payload)
+            if encoded is not None:
+                await websocket.send_bytes(encoded)
+            else:
+                await websocket.send_text(json.dumps(payload, ensure_ascii=True))
+        except Exception:
+            async with self._lock:
+                self._clock_sync_pending.pop((session_id, device_id, ping_id), None)
+            return None
+
+        try:
+            response = await asyncio.wait_for(future, timeout=timeout_seconds)
+            response["server_send_unix_ns"] = server_send_unix_ns
+            return response
+        except Exception:
+            return None
+        finally:
+            async with self._lock:
+                self._clock_sync_pending.pop((session_id, device_id, ping_id), None)
+
+    async def register_clock_sync_pong(
+        self,
+        *,
+        session_id: str,
+        device_id: str,
+        ping_id: str,
+        device_unix_ns: int,
+    ) -> bool:
+        async with self._lock:
+            future = self._clock_sync_pending.get((session_id, device_id, ping_id))
+
+        if future is None or future.done():
+            return False
+
+        future.set_result(
+            {
+                "session_id": session_id,
+                "device_id": device_id,
+                "ping_id": ping_id,
+                "device_unix_ns": device_unix_ns,
+                "server_recv_unix_ns": time.time_ns(),
+            }
+        )
+        return True
+
+    async def request_stop_acks(
+        self,
+        session_id: str,
+        device_ids: list[str],
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        unique_device_ids = sorted(set(device_ids))
+        command_id = uuid.uuid4().hex
+
+        async with self._lock:
+            candidates = {
+                device_id: self._device_connections.get(device_id)
+                for device_id in unique_device_ids
+                if self._device_session_map.get(device_id) == session_id and self._device_connections.get(device_id) is not None
+            }
+            futures: dict[str, asyncio.Future[bool]] = {
+                device_id: asyncio.get_running_loop().create_future() for device_id in candidates
+            }
+            for device_id, future in futures.items():
+                self._stop_ack_pending[(session_id, device_id, command_id)] = future
+
+        payload = {
+            "type": "STOP_SESSION",
+            "session_id": session_id,
+            "command_id": command_id,
+        }
+        encoded_binary = self._encode_control_command(payload)
+        encoded_json = json.dumps(payload, ensure_ascii=True)
+
+        sent_devices: list[str] = []
+        for device_id, websocket in candidates.items():
+            try:
+                if encoded_binary is not None:
+                    await websocket.send_bytes(encoded_binary)
+                else:
+                    await websocket.send_text(encoded_json)
+                sent_devices.append(device_id)
+            except Exception:
+                future = futures.get(device_id)
+                if future is not None and not future.done():
+                    future.cancel()
+
+        acked_devices: list[str] = []
+        pending_devices: list[str] = []
+        for device_id in sent_devices:
+            future = futures[device_id]
+            try:
+                await asyncio.wait_for(future, timeout=timeout_seconds)
+                acked_devices.append(device_id)
+            except Exception:
+                pending_devices.append(device_id)
+
+        async with self._lock:
+            for device_id in sent_devices:
+                self._stop_ack_pending.pop((session_id, device_id, command_id), None)
+
+        unsent_devices = sorted(set(unique_device_ids) - set(sent_devices))
+        return {
+            "command_id": command_id,
+            "sent_devices": sent_devices,
+            "acked_devices": acked_devices,
+            "pending_devices": sorted(set(pending_devices + unsent_devices)),
+        }
+
+    async def register_stop_session_ack(self, *, session_id: str, device_id: str, command_id: str) -> bool:
+        async with self._lock:
+            future = self._stop_ack_pending.get((session_id, device_id, command_id))
+
+        if future is None or future.done():
+            return False
+
+        future.set_result(True)
+        return True
+
+    def _encode_control_command(self, payload: dict[str, Any]) -> bytes | None:
+        msg_type = str(payload.get("type", "")).upper()
+        command_map: dict[str, int] = {
+            "START_SESSION": ControlCommandType.START_SESSION,
+            "STOP_SESSION": ControlCommandType.STOP_SESSION,
+            "CLOCK_SYNC_PING": ControlCommandType.SYNC_CLOCK,
+            "SYNC_REQUIRED": ControlCommandType.SYNC_REQUIRED,
+            "PING": ControlCommandType.PING,
+            "CLOCK_SYNC_PONG": ControlCommandType.CLOCK_SYNC_PONG,
+            "ACK": ControlCommandType.ACK,
+        }
+        command = command_map.get(msg_type)
+        if command is None:
+            return None
+
+        message = ControlCommand(
+            command=command,
+            session_id=str(payload.get("session_id", "")),
+            issued_at_server_unix_ns=int(payload.get("issued_at_server_unix_ns", time.time_ns()) or time.time_ns()),
+            schema_version=str(payload.get("schema_version", PROTO_SCHEMA_VERSION)),
+        )
+
+        if payload.get("target_sampling_hz") is not None:
+            message.target_sampling_hz = int(payload["target_sampling_hz"])
+        if payload.get("recording_start_seq") is not None:
+            message.recording_start_seq = int(payload["recording_start_seq"])
+        if payload.get("server_start_time_unix_ns") is not None:
+            message.server_start_time_unix_ns = int(payload["server_start_time_unix_ns"])
+        if payload.get("backend_last_seq") is not None:
+            message.backend_last_seq = int(payload["backend_last_seq"])
+        if payload.get("command_id") is not None:
+            message.command_id = str(payload["command_id"])
+        if payload.get("ack") is not None:
+            message.ack = bool(payload["ack"])
+        if payload.get("device_unix_ns") is not None:
+            message.device_unix_ns = int(payload["device_unix_ns"])
+        if payload.get("batch_start_seq") is not None:
+            message.batch_start_seq = int(payload["batch_start_seq"])
+        if payload.get("batch_end_seq") is not None:
+            message.batch_end_seq = int(payload["batch_end_seq"])
+        if payload.get("duplicate_batches") is not None:
+            message.duplicate_batches = int(payload["duplicate_batches"])
+        if payload.get("duplicate") is not None:
+            message.duplicate = bool(payload["duplicate"])
+        if payload.get("detail") is not None:
+            message.detail = str(payload["detail"])
+
+        return message.SerializeToString()
 
     async def publish_warning(self, session_id: str, device_id: str, warning: str) -> None:
         await self._broadcast(
