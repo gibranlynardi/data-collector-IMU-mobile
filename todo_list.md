@@ -335,38 +335,38 @@ Roadmap ini mengikuti arsitektur terbaru:
 
 ## Phase 6: Clock Sync dan Sinkronisasi Video-Sensor
 
-- [ ] Backend menjadi time authority untuk session.
-- [ ] Saat preflight, lakukan clock sync ke semua phone:
-  - [ ] ping/pong beberapa kali.
-  - [ ] hitung latency.
-  - [ ] hitung `clock_offset_ms`.
-  - [ ] simpan kualitas sync per device.
-- [ ] Saat start, backend broadcast:
-  - [ ] `session_id`.
-  - [ ] `server_start_time_unix_ns`.
-  - [ ] `recording_start_seq = 1`.
-  - [ ] target `sampling_hz = 100`.
+- [x] Backend menjadi time authority untuk session.
+- [x] Saat preflight, lakukan clock sync ke semua phone:
+  - [x] ping/pong beberapa kali.
+  - [x] hitung latency.
+  - [x] hitung `clock_offset_ms`.
+  - [x] simpan kualitas sync per device.
+- [x] Saat start, backend broadcast:
+  - [x] `session_id`.
+  - [x] `server_start_time_unix_ns`.
+  - [x] `recording_start_seq = 1`.
+  - [x] target `sampling_hz = 100`.
 - [ ] Phone menyimpan:
   - [ ] `device_start_time`.
   - [ ] `monotonic_start_ms`.
   - [ ] `server_start_time_unix_ns`.
-- [ ] Tiap sample menyertakan:
-  - [ ] `elapsed_ms`.
-  - [ ] `timestamp_device_unix_ns`.
-- [ ] Backend menghitung:
+- [x] Tiap sample menyertakan:
+  - [x] `elapsed_ms`.
+  - [x] `timestamp_device_unix_ns`.
+- [x] Backend menghitung:
   ```text
   estimated_server_time = server_start_time + elapsed_ms
   ```
-- [ ] Video recorder memakai server monotonic time yang sama.
-- [ ] Simpan sync report:
-  - [ ] offset per device.
-  - [ ] latency min/median/max.
-  - [ ] sync quality.
-  - [ ] video start offset terhadap session start.
-- [ ] Dashboard tampilkan clock sync quality:
-  - [ ] green: good.
-  - [ ] yellow: warning.
-  - [ ] red: bad, start diblokir atau butuh override.
+- [x] Video recorder memakai server monotonic time yang sama.
+- [x] Simpan sync report:
+  - [x] offset per device.
+  - [x] latency min/median/max.
+  - [x] sync quality.
+  - [x] video start offset terhadap session start.
+- [x] Dashboard tampilkan clock sync quality:
+  - [x] green: good.
+  - [x] yellow: warning.
+  - [x] red: bad, start diblokir atau butuh override.
 
 ---
 
@@ -376,6 +376,7 @@ Roadmap ini mengikuti arsitektur terbaru:
 - [ ] Buat layout utama:
   - [ ] session header.
   - [ ] elapsed timer.
+  - [ ] countdown barrier start realtime menuju `start_at_unix_ns`.
   - [ ] device health cards.
   - [ ] webcam status card.
   - [ ] realtime graph area.
@@ -441,6 +442,15 @@ Roadmap ini mengikuti arsitektur terbaru:
 ---
 
 ## Phase 8: Flutter Mobile Node Refactor
+
+- [ ] Tutup gap arsitektur mobile agar sesuai Wi-Fi WebSocket `100 Hz` (blocker MVP end-to-end):
+  - [ ] hentikan dependensi jalur utama Bluetooth parser untuk mode koleksi utama.
+  - [ ] buat connection manager ke endpoint `/ws/device/{device_id}`.
+  - [ ] dukung command control dari backend: `START_SESSION`, `STOP_SESSION`, `CLOCK_SYNC`.
+  - [ ] ubah sensor ticker default ke target sampling `100 Hz` stabil.
+  - [ ] simpan data lokal durable sebelum upload (SQLite/local queue).
+  - [ ] upload `SensorBatch` Protobuf via Wi-Fi dengan retry + resume.
+  - [ ] verifikasi flow end-to-end phone sebagai IMU node Wi-Fi hingga backend ingest.
 
 - [ ] Update dependency Flutter:
   - [ ] `web_socket_channel`.
