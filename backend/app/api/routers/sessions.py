@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 import json
+import logging
 from typing import Annotated
 from uuid import uuid4
 
@@ -13,7 +14,7 @@ from app.core.session_manager import SessionStateError, session_manager
 from app.db.models import Session as SessionModel
 from app.db.session import get_db
 from app.schemas.sessions import SessionCreateRequest, SessionFinalizeRequest, SessionResponse, SessionStatusResponse
-from app.schemas.video import VideoMetadataResponse, VideoStatusResponse
+from app.schemas.video import VideoAnonymizeResponse, VideoMetadataResponse, VideoStatusResponse
 from app.services.artifacts import ensure_session_layout, finalize_session_artifacts, seed_session_artifacts
 from app.services.csv_writer import csv_writer_service
 from app.services.preflight import is_preflight_passed, store_preflight_report
@@ -21,6 +22,7 @@ from app.services.video_recorder import video_recorder_service
 from app.services.ws_runtime import ws_runtime
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+logger = logging.getLogger(__name__)
 DBSession = Annotated[Session, Depends(get_db)]
 SESSION_ID_PATTERN = r"^\d{8}_\d{6}_[A-F0-9]{8}$"
 SESSION_RESPONSES_404 = {404: {"description": "Session not found"}}
@@ -38,6 +40,32 @@ def _generate_session_id() -> str:
 def _sidecar_path_for_session(session_id: str):
     settings = get_settings()
     return settings.data_root / "sessions" / session_id / "video" / f"{session_id}_webcam.json"
+
+
+def _rollback_start_failure(db: Session, session_id: str) -> None:
+    session = db.get(SessionModel, session_id)
+    if session and session.status == "RUNNING":
+        session.status = "CREATED"
+        session.started_at = None
+        db.commit()
+
+
+def _cleanup_failed_start(db: Session, session_id: str, *, video_started: bool, session_started: bool) -> None:
+    if not (video_started or session_started):
+        return
+
+    try:
+        csv_writer_service.close_session(session_id)
+    except Exception:
+        logger.exception("Failed closing CSV writers during start rollback for session %s", session_id)
+
+    try:
+        video_recorder_service.stop_session_recording(db, session_id, suppress_errors=True)
+    except Exception:
+        logger.exception("Failed stopping recorder during start rollback for session %s", session_id)
+
+    if session_started:
+        _rollback_start_failure(db, session_id)
 
 
 @router.post("", responses={400: {"description": "Preflight failed"}, 409: {"description": "Another session is active"}})
@@ -98,20 +126,26 @@ async def start_session(
     session.preflight_passed = preflight_ok
     store_preflight_report(db, server_report, session_id=session_id)
 
+    video_started = False
+    session_started = False
     try:
         video_result = video_recorder_service.start_session_recording(
             db,
             session_id,
             allow_override=bool(session.override_reason),
         )
+        video_started = video_result.get("status") == "recording"
         if video_result.get("status") == "failed" and not session.override_reason:
             raise RuntimeError(video_result.get("error") or "video recorder start failed")
 
         session = session_manager.start_session(db, session_id)
+        session_started = True
         csv_writer_service.prepare_session_writers(db, session_id)
     except RuntimeError as exc:
+        _cleanup_failed_start(db, session_id, video_started=video_started, session_started=session_started)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
+        _cleanup_failed_start(db, session_id, video_started=video_started, session_started=session_started)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SessionStateError as exc:
         video_recorder_service.stop_session_recording(db, session_id, suppress_errors=True)
@@ -200,6 +234,22 @@ def download_video_metadata(session_id: Annotated[str, Path(pattern=SESSION_ID_P
         raise HTTPException(status_code=404, detail="video metadata not found")
 
     return FileResponse(path=str(sidecar_path), media_type="application/json", filename=sidecar_path.name)
+
+
+@router.post("/{session_id}/video/anonymize", responses=SESSION_RESPONSES_404)
+def anonymize_video(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)], db: DBSession) -> VideoAnonymizeResponse:
+    session = db.get(SessionModel, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+
+    try:
+        payload = video_recorder_service.anonymize_session_video(session_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return VideoAnonymizeResponse(**payload)
 
 
 @router.get("/{session_id}", responses=SESSION_RESPONSES_404)
