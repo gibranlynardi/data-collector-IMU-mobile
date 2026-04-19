@@ -74,7 +74,6 @@ def _cleanup_failed_start(db: Session, session_id: str, *, video_started: bool, 
         video_recorder_service.stop_session_recording(db, session_id, suppress_errors=True)
     except Exception:
         logger.exception("Failed stopping recorder during start rollback for session %s", session_id)
-
     if session_started:
         _rollback_start_failure(db, session_id)
 
@@ -452,7 +451,7 @@ async def start_session(
             "start_delay_ms": start_lead_ms,
             "server_start_time_unix_ns": int(authority.server_start_time_unix_ns),
             "recording_start_seq": 1,
-            "sampling_hz": get_settings().session_target_sampling_hz,
+            "target_sampling_hz": get_settings().session_target_sampling_hz,
         },
     )
     await ws_runtime.publish_session_event(
