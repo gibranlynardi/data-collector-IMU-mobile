@@ -17,13 +17,14 @@ VALID_ROLES = {"chest", "waist", "thigh", "other"}
 
 
 def _validate_ingest_context(db: Session, session_id: str, device_id: str, device_role: str) -> tuple[SessionModel, Device]:
+    ingest_allowed_states = {"RUNNING", "SYNCING"}
     session = db.get(SessionModel, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="session not found")
-    if session.status != "RUNNING":
+    if session.status not in ingest_allowed_states:
         raise HTTPException(
             status_code=409,
-            detail=f"session status {session.status} tidak menerima ingest (hanya RUNNING)",
+            detail=f"session status {session.status} tidak menerima ingest (hanya RUNNING/SYNCING)",
         )
 
     device = db.get(Device, device_id)
