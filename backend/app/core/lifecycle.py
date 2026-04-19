@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.core.config import get_settings
 from app.db.session import dispose_engine
+from app.services.video_recorder import video_recorder_service
 
 
 @dataclass
@@ -11,6 +12,11 @@ class PreflightReport:
     backend_healthy: bool
     storage_path_writable: bool
     storage_free_bytes: int
+    webcam_connected: bool
+    webcam_preview_ok: bool
+    webcam_fps: float
+    webcam_fps_ok: bool
+    webcam_storage_ok: bool
     webcam_available: bool
     webcam_detail: str
 
@@ -36,33 +42,29 @@ def _check_storage(path: Path) -> tuple[bool, int]:
         return False, 0
 
 
-def _check_webcam(index: int) -> tuple[bool, str]:
-    try:
-        import cv2  # type: ignore
-
-        cap = cv2.VideoCapture(index)
-        if not cap.isOpened():
-            return False, f"camera index {index} cannot be opened"
-        ok, _ = cap.read()
-        cap.release()
-        if not ok:
-            return False, f"camera index {index} opened but no frame"
-        return True, f"camera index {index} ready"
-    except Exception as exc:
-        return False, f"opencv unavailable or camera check failed: {exc}"
-
-
 def run_startup_checks() -> dict:
     settings = get_settings()
     storage_ok, free_bytes = _check_storage(settings.data_root)
-    webcam_ok, webcam_detail = _check_webcam(settings.webcam_index)
+    webcam_report = video_recorder_service.inspect_webcam()
+    webcam_storage_ok = storage_ok and free_bytes >= settings.webcam_min_free_bytes
+    webcam_ok = bool(
+        webcam_report.get("webcam_connected")
+        and webcam_report.get("webcam_preview_ok")
+        and webcam_report.get("webcam_fps_ok")
+        and webcam_storage_ok
+    )
 
     report = PreflightReport(
         backend_healthy=True,
         storage_path_writable=storage_ok,
         storage_free_bytes=free_bytes,
+        webcam_connected=bool(webcam_report.get("webcam_connected", False)),
+        webcam_preview_ok=bool(webcam_report.get("webcam_preview_ok", False)),
+        webcam_fps=float(webcam_report.get("webcam_fps", 0.0) or 0.0),
+        webcam_fps_ok=bool(webcam_report.get("webcam_fps_ok", False)),
+        webcam_storage_ok=webcam_storage_ok,
         webcam_available=webcam_ok,
-        webcam_detail=webcam_detail,
+        webcam_detail=str(webcam_report.get("webcam_detail", "")),
     )
     return asdict(report)
 
