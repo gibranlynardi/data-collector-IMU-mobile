@@ -28,6 +28,10 @@ class ControlCommandType extends $pb.ProtobufEnum {
       ControlCommandType._(4, _omitEnumNames ? '' : 'SYNC_REQUIRED');
   static const ControlCommandType PING =
       ControlCommandType._(5, _omitEnumNames ? '' : 'PING');
+  static const ControlCommandType ACK =
+      ControlCommandType._(6, _omitEnumNames ? '' : 'ACK');
+  static const ControlCommandType CLOCK_SYNC_PONG =
+      ControlCommandType._(7, _omitEnumNames ? '' : 'CLOCK_SYNC_PONG');
 
   static const $core.List<ControlCommandType> values = <ControlCommandType>[
     CONTROL_COMMAND_TYPE_UNSPECIFIED,
@@ -36,10 +40,12 @@ class ControlCommandType extends $pb.ProtobufEnum {
     SYNC_CLOCK,
     SYNC_REQUIRED,
     PING,
+    ACK,
+    CLOCK_SYNC_PONG,
   ];
 
   static final $core.List<ControlCommandType?> _byValue =
-      $pb.ProtobufEnum.$_initByValueList(values, 5);
+      $pb.ProtobufEnum.$_initByValueList(values, 7);
   static ControlCommandType? valueOf($core.int value) =>
       value < 0 || value >= _byValue.length ? null : _byValue[value];
 
