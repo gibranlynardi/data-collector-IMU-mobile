@@ -1,8 +1,10 @@
 import csv
 import json
+import os
 import struct
 from pathlib import Path
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -10,8 +12,8 @@ import app.db.session as db_session
 import app.main as main_app
 from app.core.config import get_settings
 from app.db.base import Base
-from app.db.models import Device, Session as SessionModel
-from app.services.csv_writer import SensorSampleRow, csv_writer_service
+from app.db.models import Device, Session as SessionModel, SessionDevice
+from app.services.csv_writer import CsvWriterService, SensorSampleRow, csv_writer_service
 from generated.sensor_sample_pb2 import SensorBatch
 
 
@@ -177,6 +179,7 @@ def test_ingest_endpoint_writes_csv(tmp_path: Path, monkeypatch) -> None:
     with testing_session_local() as db:
         db.add(Device(device_id=device_id, device_role="waist", connected=True))
         db.add(SessionModel(session_id=session_id, status="RUNNING", preflight_passed=True))
+        db.add(SessionDevice(session_id=session_id, device_id=device_id, required=True))
         db.commit()
 
     with TestClient(main_app.app) as client:
@@ -221,3 +224,63 @@ def test_ingest_endpoint_writes_csv(tmp_path: Path, monkeypatch) -> None:
     binlog_path = data_root / "sessions" / session_id / "sensor" / f"waist_{device_id}.binlog"
     assert csv_path.exists()
     assert binlog_path.exists()
+
+
+def test_csv_lock_rejects_active_owner(tmp_path: Path, monkeypatch) -> None:
+    data_root = tmp_path / "data"
+    sensor_dir = data_root / "sessions" / "20260419_143022_A1B2C3D4" / "sensor"
+    sensor_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("DATA_ROOT", str(data_root))
+    get_settings.cache_clear()
+
+    first = CsvWriterService()
+    first._settings = get_settings()
+    second = CsvWriterService()
+    second._settings = get_settings()
+
+    lock_path = sensor_dir / "chest_DEVICE-CHEST-001.lock"
+    first._acquire_lock(lock_path)
+
+    with pytest.raises(RuntimeError):
+        second._acquire_lock(lock_path)
+
+
+def test_csv_lock_recovers_stale_owner(tmp_path: Path, monkeypatch) -> None:
+    data_root = tmp_path / "data"
+    sensor_dir = data_root / "sessions" / "20260419_143022_A1B2C3D4" / "sensor"
+    sensor_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("DATA_ROOT", str(data_root))
+    get_settings.cache_clear()
+
+    lock_path = sensor_dir / "chest_DEVICE-CHEST-001.lock"
+    lock_path.write_text(json.dumps({"pid": 42424242, "acquired_at": "2026-04-19T00:00:00"}, ensure_ascii=True), encoding="utf-8")
+
+    service = CsvWriterService()
+    service._settings = get_settings()
+    monkeypatch.setattr(service, "_is_pid_alive", lambda _pid: False)
+
+    service._acquire_lock(lock_path)
+    assert lock_path.exists()
+    payload = json.loads(lock_path.read_text(encoding="utf-8"))
+    assert int(payload.get("pid", 0) or 0) == os.getpid()
+
+
+def test_csv_lock_does_not_recover_live_owner(tmp_path: Path, monkeypatch) -> None:
+    data_root = tmp_path / "data"
+    sensor_dir = data_root / "sessions" / "20260419_143022_A1B2C3D4" / "sensor"
+    sensor_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("DATA_ROOT", str(data_root))
+    get_settings.cache_clear()
+
+    lock_path = sensor_dir / "chest_DEVICE-CHEST-001.lock"
+    lock_path.write_text(json.dumps({"pid": 12345, "acquired_at": "2026-04-19T00:00:00"}, ensure_ascii=True), encoding="utf-8")
+
+    service = CsvWriterService()
+    service._settings = get_settings()
+    monkeypatch.setattr(service, "_is_pid_alive", lambda _pid: True)
+
+    with pytest.raises(RuntimeError):
+        service._acquire_lock(lock_path)
