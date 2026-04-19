@@ -13,6 +13,7 @@ import app.main as main_app
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.models import Device, Session as SessionModel, SessionDevice
+from app.services.clock_sync import clock_sync_service
 from app.services.csv_writer import CsvWriterService, SensorSampleRow, csv_writer_service
 from generated.sensor_sample_pb2 import SensorBatch
 
@@ -82,6 +83,7 @@ def test_csv_writer_dedup_gap_state_summary(tmp_path: Path, monkeypatch) -> None
     with testing_session_local() as db:
         db.add(Device(device_id=device_id, device_role=role, connected=True))
         db.add(SessionModel(session_id=session_id, status="RUNNING", preflight_passed=True))
+        db.add(SessionDevice(session_id=session_id, device_id=device_id, required=True))
         db.commit()
 
         prepared = csv_writer_service.prepare_session_writers(db, session_id)
@@ -284,3 +286,41 @@ def test_csv_lock_does_not_recover_live_owner(tmp_path: Path, monkeypatch) -> No
 
     with pytest.raises(RuntimeError):
         service._acquire_lock(lock_path)
+
+
+def test_csv_writer_estimated_server_time_uses_session_start_anchor(tmp_path: Path, monkeypatch) -> None:
+    data_root = tmp_path / "data"
+    data_root.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("DATA_ROOT", str(data_root))
+    get_settings.cache_clear()
+    csv_writer_service._settings = get_settings()
+
+    session_id = "20260419_143022_A1B2C3D4"
+    device_id = "DEVICE-CHEST-001"
+    role = "chest"
+
+    anchor_ns = 1_700_000_000_000_000_000
+    monkeypatch.setattr(
+        clock_sync_service,
+        "get_server_start_time_unix_ns",
+        lambda sid: anchor_ns if sid == session_id else None,
+    )
+
+    samples = [
+        _make_sample(session_id, device_id, role, seq=1, elapsed_ms=0),
+        _make_sample(session_id, device_id, role, seq=2, elapsed_ms=10),
+    ]
+
+    result = csv_writer_service.ingest_samples(session_id, device_id, role, samples)
+    assert result["written"] == 2
+
+    csv_writer_service.close_session(session_id)
+    csv_path = data_root / "sessions" / session_id / "sensor" / f"{role}_{device_id}.csv"
+    with csv_path.open("r", newline="", encoding="utf-8") as file_obj:
+        rows = list(csv.reader(file_obj))
+
+    first_estimated = int(rows[1][6])
+    second_estimated = int(rows[2][6])
+    assert first_estimated == anchor_ns
+    assert second_estimated == anchor_ns + 10_000_000
