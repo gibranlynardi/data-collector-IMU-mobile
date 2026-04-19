@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from google.protobuf.message import DecodeError
 from generated.sensor_sample_pb2 import SensorBatch
 
 from app.services.csv_writer import csv_writer_service
+
+
+class IngestProtocolError(Exception):
+    def __init__(self, code: str, detail: str) -> None:
+        self.code = code
+        self.detail = detail
+        super().__init__(detail)
 
 
 def ingest_protobuf_batch_message(
@@ -23,3 +31,62 @@ def ingest_protobuf_batch_message(
         raw_payload=raw_payload,
         device_role_override=device_role_override,
     )
+
+
+def ingest_ws_binary_batch(
+    raw_payload: bytes,
+    *,
+    connection_session_id: str | None = None,
+    connection_device_id: str | None = None,
+    device_role_override: str | None = None,
+) -> dict[str, Any]:
+    """WS adapter for binary SensorBatch frames.
+
+    This keeps WS ACK schema stable while reusing the same ingest path as REST.
+    """
+
+    batch = SensorBatch()
+    try:
+        batch.ParseFromString(raw_payload)
+    except DecodeError as exc:
+        raise IngestProtocolError(
+            code="INVALID_PROTOBUF",
+            detail="payload binary tidak bisa diparse sebagai SensorBatch",
+        ) from exc
+
+    if not batch.samples:
+        raise IngestProtocolError(
+            code="EMPTY_BATCH",
+            detail="SensorBatch.samples tidak boleh kosong",
+        )
+
+    if connection_session_id is not None and batch.session_id != connection_session_id:
+        raise IngestProtocolError(
+            code="SESSION_OR_DEVICE_MISMATCH",
+            detail="session_id atau device_id di batch tidak cocok dengan koneksi",
+        )
+
+    if connection_device_id is not None and batch.device_id != connection_device_id:
+        raise IngestProtocolError(
+            code="SESSION_OR_DEVICE_MISMATCH",
+            detail="session_id atau device_id di batch tidak cocok dengan koneksi",
+        )
+
+    ingest_result = ingest_protobuf_batch_message(
+        batch=batch,
+        raw_payload=raw_payload,
+        device_role_override=device_role_override,
+    )
+
+    duplicate = bool(ingest_result.get("written", 0) == 0)
+
+    return {
+        "type": "ACK",
+        "session_id": batch.session_id,
+        "device_id": batch.device_id,
+        "batch_start_seq": int(batch.start_seq),
+        "batch_end_seq": int(batch.end_seq),
+        "last_received_seq": int(ingest_result.get("last_seq", 0) or 0),
+        "duplicate": duplicate,
+        "duplicate_batches": 1 if duplicate else 0,
+    }
