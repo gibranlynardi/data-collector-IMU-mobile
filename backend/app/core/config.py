@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     webcam_index: int = 0
     webcam_path: str | None = None
 
+    csv_flush_every_samples: int = 200
+    csv_flush_every_seconds: float = 2.0
+    csv_allow_recover_stale_lock: bool = True
+
     required_device_roles: str = Field(default="chest,waist,thigh")
 
     @property
