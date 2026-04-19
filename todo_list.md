@@ -228,34 +228,42 @@ Roadmap ini mengikuti arsitektur terbaru:
 
 ## Phase 4: Backend CSV Writer Per Device
 
-- [ ] Buat writer service untuk setiap `(session_id, device_id)`.
-- [ ] Saat session start, buat CSV file per device:
+- [x] Buat writer service untuk setiap `(session_id, device_id)`.
+- [x] Saat session start, buat CSV file per device:
   ```text
   sessions/{session_id}/sensor/{device_role}_{device_id}.csv
   ```
-- [ ] Header CSV final:
+- [x] Header CSV final:
   ```text
   session_id,device_id,device_role,seq,timestamp_device_unix_ns,timestamp_server_unix_ns,estimated_server_unix_ns,elapsed_ms,acc_x_g,acc_y_g,acc_z_g,gyro_x_deg,gyro_y_deg,gyro_z_deg
   ```
-- [ ] Writer harus append-only.
-- [ ] Writer harus flush berkala:
-  - [ ] flush per N sample.
-  - [ ] flush per N detik.
-  - [ ] flush saat stop session.
-- [ ] Tambahkan file lock/state supaya crash recovery bisa tahu CSV terakhir.
-- [ ] Tambahkan index/summary per device:
-  - [ ] first seq.
-  - [ ] last seq.
-  - [ ] sample count.
-  - [ ] missing seq ranges.
-  - [ ] effective Hz.
-- [ ] Pastikan duplicate sample tidak ditulis ulang:
-  - [ ] track last seq per device.
-  - [ ] skip duplicate seq.
-  - [ ] log gap jika seq lompat.
-- [ ] Tambahkan opsi raw binary archive:
-  - [ ] simpan Protobuf batch mentah untuk audit/debug.
-  - [ ] optional, bisa setelah MVP.
+- [x] Writer harus append-only.
+- [x] Writer harus flush berkala:
+  - [x] flush per N sample.
+  - [x] flush per N detik.
+  - [x] flush saat stop session.
+- [x] Tambahkan file lock/state supaya crash recovery bisa tahu CSV terakhir.
+- [x] Tambahkan index/summary per device:
+  - [x] first seq.
+  - [x] last seq.
+  - [x] sample count.
+  - [x] missing seq ranges.
+  - [x] effective Hz.
+- [x] Pastikan duplicate sample tidak ditulis ulang:
+  - [x] track last seq per device.
+  - [x] skip duplicate seq.
+  - [x] log gap jika seq lompat.
+- [x] Tambahkan opsi raw binary archive:
+  - [x] simpan Protobuf batch mentah untuk audit/debug.
+  - [x] optional, bisa setelah MVP.
+
+### Phase 4 Notes
+
+- Service writer: `backend/app/services/csv_writer.py`.
+- Integrasi lifecycle:
+  - session start menyiapkan writer per device.
+  - session stop melakukan flush + close writer + generate summary.
+- Endpoint ingest MVP: `POST /sessions/{session_id}/ingest/sensor-batch` untuk menulis batch JSON ke CSV.
 
 ---
 
