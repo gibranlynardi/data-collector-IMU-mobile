@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package imu.collector.v1;
+
+option java_multiple_files = true;
+option java_package = "com.fams.imu.collector.v1";
+option go_package = "imu/collector/v1;collectorv1";
+option csharp_namespace = "Fams.Imu.Collector.V1";
+
+message DeviceStatus {
+  string device_id = 1;
+  string device_role = 2;
+  bool connected = 3;
+  bool recording = 4;
+  uint64 local_last_seq = 5;
+  uint64 backend_last_ack_seq = 6;
+  uint32 pending_samples = 7;
+  float battery_percent = 8;
+  uint32 storage_free_mb = 9;
+  float effective_hz = 10;
+}
