@@ -17,6 +17,12 @@ class Settings(BaseSettings):
 
     webcam_index: int = 0
     webcam_path: str | None = None
+    webcam_min_fps: float = 15.0
+    webcam_target_fps: float = 30.0
+    webcam_target_width: int = 1280
+    webcam_target_height: int = 720
+    webcam_codec: str = "mp4v"
+    webcam_min_free_bytes: int = 1_000_000_000
 
     csv_flush_every_samples: int = 200
     csv_flush_every_seconds: float = 2.0
