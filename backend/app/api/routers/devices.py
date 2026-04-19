@@ -25,7 +25,7 @@ def register_device(payload: DeviceRegisterRequest, db: DBSession) -> DeviceResp
             device_role=payload.device_role,
             display_name=payload.display_name,
             ip_address=payload.ip_address,
-            connected=True,
+            connected=False,
         )
         db.add(device)
 
