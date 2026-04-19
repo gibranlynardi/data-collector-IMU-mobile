@@ -320,7 +320,7 @@ Roadmap ini mengikuti arsitektur terbaru:
   - [x] jika video recorder gagal saat session berjalan, dashboard beri warning besar.
   - [x] session tetap bisa dilanjutkan atau dihentikan sesuai keputusan operator.
 
-- [ ] Integrasi deface untuk auto anonim muka di video anotasi
+- [x] Integrasi deface untuk auto anonim muka di video anotasi
 
 ### Phase 5 Notes
 
@@ -425,6 +425,12 @@ Roadmap ini mengikuti arsitektur terbaru:
   - [ ] recording indicator.
   - [ ] elapsed video time.
   - [ ] dropped frame warning jika tersedia.
+  - [ ] toggle `Anonymize video` (Yes/No), default `No` (tidak otomatis).
+  - [ ] tombol `Anonymize Now` untuk trigger manual proses anonymize.
+  - [ ] saat toggle `Yes`, saat stop/finalize tampilkan konfirmasi jalankan anonymize.
+  - [ ] panggil API `POST /sessions/{session_id}/video/anonymize` hanya jika toggle `Yes` atau tombol manual ditekan.
+  - [ ] tampilkan progress/status anonymize: pending/running/completed/failed.
+  - [ ] tampilkan path output anonymized video + metadata setelah selesai.
 - [ ] Buat artifact panel:
   - [ ] CSV per device.
   - [ ] video file.
