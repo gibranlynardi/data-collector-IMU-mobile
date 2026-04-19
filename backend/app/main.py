@@ -13,6 +13,7 @@ from app.db.base import Base
 from app.db import models  # noqa: F401
 from app.db.session import engine
 from app.services.csv_writer import csv_writer_service
+from app.services.video_recorder import video_recorder_service
 
 
 @asynccontextmanager
@@ -20,6 +21,7 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     app.state.preflight_report = run_startup_checks()
     yield
+    video_recorder_service.close_all()
     csv_writer_service.close_all()
     app.state.shutdown_report = run_shutdown_tasks()
 
