@@ -1,6 +1,6 @@
 from sqlalchemy import create_engine, inspect, text
 
-import app.main as main_app
+from app.db.migrations import run_internal_migrations
 
 
 def test_ensure_video_recordings_schema_adds_monotonic_columns(tmp_path) -> None:
@@ -27,12 +27,14 @@ def test_ensure_video_recordings_schema_adds_monotonic_columns(tmp_path) -> None
             )
         )
 
-    original_engine = main_app.engine
-    main_app.engine = engine
-    try:
-        main_app._ensure_video_recordings_schema()
-        columns = {c["name"] for c in inspect(engine).get_columns("video_recordings")}
-        assert "video_start_monotonic_ms" in columns
-        assert "video_end_monotonic_ms" in columns
-    finally:
-        main_app.engine = original_engine
+    run_internal_migrations(engine)
+
+    inspector = inspect(engine)
+    columns = {c["name"] for c in inspector.get_columns("video_recordings")}
+    assert "video_start_monotonic_ms" in columns
+    assert "video_end_monotonic_ms" in columns
+    assert "annotation_audits" in set(inspector.get_table_names())
+
+    with engine.begin() as conn:
+        versions = [row[0] for row in conn.execute(text("SELECT version FROM schema_migrations"))]
+    assert "20260419_0001_add_video_monotonic_columns" in versions
