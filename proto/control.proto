@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package imu.collector.v1;
+
+option java_multiple_files = true;
+option java_package = "com.fams.imu.collector.v1";
+option go_package = "imu/collector/v1;collectorv1";
+option csharp_namespace = "Fams.Imu.Collector.V1";
+
+enum ControlCommandType {
+  CONTROL_COMMAND_TYPE_UNSPECIFIED = 0;
+  START_SESSION = 1;
+  STOP_SESSION = 2;
+  SYNC_CLOCK = 3;
+  SYNC_REQUIRED = 4;
+  PING = 5;
+}
+
+message ControlCommand {
+  ControlCommandType command = 1;
+  string session_id = 2;
+  uint64 issued_at_server_unix_ns = 3;
+  string schema_version = 4;
+
+  // Optional command arguments.
+  uint32 target_sampling_hz = 10;
+  uint64 recording_start_seq = 11;
+  uint64 server_start_time_unix_ns = 12;
+  uint64 backend_last_seq = 13;
+}
