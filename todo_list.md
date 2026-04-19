@@ -271,7 +271,7 @@ Roadmap ini mengikuti arsitektur terbaru:
 
 - [x] Pilih implementasi webcam recorder:
   - [x] OpenCV Python untuk MVP.
-  - [ ] FFmpeg subprocess jika butuh performa/stabilitas lebih baik.
+  - [x] FFmpeg subprocess jika butuh performa/stabilitas lebih baik.
 - [x] Buat `VideoRecorderService`.
 - [x] Deteksi webcam:
   - [x] camera index.
@@ -326,6 +326,9 @@ Roadmap ini mengikuti arsitektur terbaru:
 
 - Recorder runtime ada di `backend/app/services/video_recorder.py`.
 - API status untuk dashboard: `GET /sessions/{session_id}/video/status`.
+- API sidecar metadata untuk dashboard:
+  - `GET /sessions/{session_id}/video/metadata`
+  - `GET /sessions/{session_id}/video/metadata/download`
 - Preflight websocket tetap via `GET /preflight` dengan field webcam detail baru.
 
 ---

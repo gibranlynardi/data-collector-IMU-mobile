@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     webcam_target_height: int = 720
     webcam_codec: str = "mp4v"
     webcam_min_free_bytes: int = 1_000_000_000
+    ffmpeg_fallback_enabled: bool = True
+    ffmpeg_executable: str = "ffmpeg"
+    ffmpeg_camera_input: str | None = None
+    ffmpeg_camera_format: str = "dshow"
 
     csv_flush_every_samples: int = 200
     csv_flush_every_seconds: float = 2.0

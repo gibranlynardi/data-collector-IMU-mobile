@@ -1,16 +1,19 @@
 from datetime import UTC, datetime
+import json
 from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.lifecycle import run_startup_checks
 from app.core.session_manager import SessionStateError, session_manager
 from app.db.models import Session as SessionModel
 from app.db.session import get_db
 from app.schemas.sessions import SessionCreateRequest, SessionFinalizeRequest, SessionResponse, SessionStatusResponse
-from app.schemas.video import VideoStatusResponse
+from app.schemas.video import VideoMetadataResponse, VideoStatusResponse
 from app.services.artifacts import ensure_session_layout, finalize_session_artifacts, seed_session_artifacts
 from app.services.csv_writer import csv_writer_service
 from app.services.preflight import is_preflight_passed, store_preflight_report
@@ -29,6 +32,11 @@ def _generate_session_id() -> str:
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     suffix = uuid4().hex[:8].upper()
     return f"{timestamp}_{suffix}"
+
+
+def _sidecar_path_for_session(session_id: str):
+    settings = get_settings()
+    return settings.data_root / "sessions" / session_id / "video" / f"{session_id}_webcam.json"
 
 
 @router.post("", responses={400: {"description": "Preflight failed"}, 409: {"description": "Another active session exists"}})
@@ -121,6 +129,33 @@ def get_video_status(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)
     if not session:
         raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
     return VideoStatusResponse(**video_recorder_service.get_runtime_status(db, session_id))
+
+
+@router.get("/{session_id}/video/metadata", responses=SESSION_RESPONSES_404)
+def get_video_metadata(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)], db: DBSession) -> VideoMetadataResponse:
+    session = db.get(SessionModel, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+
+    sidecar_path = _sidecar_path_for_session(session_id)
+    if not sidecar_path.exists():
+        raise HTTPException(status_code=404, detail="video metadata not found")
+
+    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    return VideoMetadataResponse(**payload)
+
+
+@router.get("/{session_id}/video/metadata/download", responses=SESSION_RESPONSES_404)
+def download_video_metadata(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)], db: DBSession) -> FileResponse:
+    session = db.get(SessionModel, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+
+    sidecar_path = _sidecar_path_for_session(session_id)
+    if not sidecar_path.exists():
+        raise HTTPException(status_code=404, detail="video metadata not found")
+
+    return FileResponse(path=str(sidecar_path), media_type="application/json", filename=sidecar_path.name)
 
 
 @router.get("/{session_id}", responses=SESSION_RESPONSES_404)

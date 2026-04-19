@@ -48,6 +48,7 @@ Dengan ini jalur ingest REST dan WS tetap tunggal (dedup, CSV append, gap tracki
 
 - Service: `app/services/video_recorder.py`.
 - Session start otomatis mencoba start recorder webcam.
+- Jika OpenCV gagal, service auto-switch ke fallback FFmpeg (jika di-enable).
 - Session stop otomatis stop recorder dan finalisasi metadata.
 - Output video:
 	- `sessions/{session_id}/video/{session_id}_webcam.mp4`
@@ -55,6 +56,9 @@ Dengan ini jalur ingest REST dan WS tetap tunggal (dedup, CSV append, gap tracki
 	- `sessions/{session_id}/video/{session_id}_webcam.json`
 - Status endpoint untuk dashboard:
 	- `GET /sessions/{session_id}/video/status`
+- Sidecar metadata endpoints untuk dashboard/API:
+	- `GET /sessions/{session_id}/video/metadata`
+	- `GET /sessions/{session_id}/video/metadata/download`
 
 Preflight webcam sekarang memeriksa:
 
@@ -62,6 +66,13 @@ Preflight webcam sekarang memeriksa:
 - `webcam_preview_ok`
 - `webcam_fps` dan `webcam_fps_ok`
 - `webcam_storage_ok` berdasarkan `WEBCAM_MIN_FREE_BYTES`
+
+Konfigurasi fallback FFmpeg:
+
+- `FFMPEG_FALLBACK_ENABLED`
+- `FFMPEG_EXECUTABLE`
+- `FFMPEG_CAMERA_INPUT`
+- `FFMPEG_CAMERA_FORMAT`
 
 Contoh mapping di handler binary frame WS (ACK contract tetap):
 
