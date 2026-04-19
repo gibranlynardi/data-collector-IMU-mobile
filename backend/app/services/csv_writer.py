@@ -97,18 +97,15 @@ class CsvWriterService:
             .all()
         )
 
-        if session_devices:
-            for session_device, device in session_devices:
-                device_role = (device.device_role or "other").lower()
-                self.ensure_writer(session_id, session_device.device_id, device_role)
-                prepared.append(session_device.device_id)
-            return prepared
+        if not session_devices:
+            raise RuntimeError(
+                "session tidak memiliki assignment device; assign lewat PUT /sessions/{session_id}/devices"
+            )
 
-        devices = db.query(Device).order_by(Device.device_id.asc()).all()
-        for device in devices:
+        for session_device, device in session_devices:
             device_role = (device.device_role or "other").lower()
-            self.ensure_writer(session_id, device.device_id, device_role)
-            prepared.append(device.device_id)
+            self.ensure_writer(session_id, session_device.device_id, device_role)
+            prepared.append(session_device.device_id)
         return prepared
 
     def ensure_writer(self, session_id: str, device_id: str, device_role: str) -> None:
@@ -277,6 +274,9 @@ class CsvWriterService:
 
             batch_received_server_unix_ns = time.time_ns()
             last_elapsed_ms = samples[-1].elapsed_ms
+            from app.services.clock_sync import clock_sync_service
+
+            session_start_unix_ns = clock_sync_service.get_server_start_time_unix_ns(session_id)
 
             for sample in samples:
                 if state.last_seq is not None and sample.seq <= state.last_seq:
@@ -287,7 +287,10 @@ class CsvWriterService:
                 if state.last_seq is not None and sample.seq > state.last_seq + 1:
                     state.missing_ranges.append([state.last_seq + 1, sample.seq - 1])
 
-                estimated_server_unix_ns = batch_received_server_unix_ns - ((last_elapsed_ms - sample.elapsed_ms) * 1_000_000)
+                if session_start_unix_ns is not None:
+                    estimated_server_unix_ns = session_start_unix_ns + (sample.elapsed_ms * 1_000_000)
+                else:
+                    estimated_server_unix_ns = batch_received_server_unix_ns - ((last_elapsed_ms - sample.elapsed_ms) * 1_000_000)
 
                 if state.first_seq is None:
                     state.first_seq = sample.seq
