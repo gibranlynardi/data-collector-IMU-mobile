@@ -451,8 +451,9 @@ class WsRuntime:
             schema_version=str(payload.get("schema_version", PROTO_SCHEMA_VERSION)),
         )
 
-        if payload.get("target_sampling_hz") is not None:
-            message.target_sampling_hz = int(payload["target_sampling_hz"])
+        sampling_hz = payload.get("target_sampling_hz", payload.get("sampling_hz"))
+        if sampling_hz is not None:
+            message.target_sampling_hz = int(sampling_hz)
         if payload.get("recording_start_seq") is not None:
             message.recording_start_seq = int(payload["recording_start_seq"])
         if payload.get("server_start_time_unix_ns") is not None:

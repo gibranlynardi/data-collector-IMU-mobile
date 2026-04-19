@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+:root {
+  --background: #efe6d8;
+  --foreground: #1e1b16;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-poppins);
+  --font-display: var(--font-sora);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-poppins), sans-serif;
+}
+
+.font-display {
+  font-family: var(--font-sora), sans-serif;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #b89e78 #f4ecdf;
+}
