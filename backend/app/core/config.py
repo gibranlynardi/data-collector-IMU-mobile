@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     ffmpeg_executable: str = "ffmpeg"
     ffmpeg_camera_input: str | None = None
     ffmpeg_camera_format: str = "dshow"
+    video_deface_enabled: bool = True
+    video_deface_executable: str = "deface"
+    video_deface_replacewith: str = "blur"
+    video_deface_keep_audio: bool = False
+    video_deface_backend: str = "auto"
+    video_deface_blur_kernel: int = 51
+    video_deface_scale_factor: float = 1.1
+    video_deface_min_neighbors: int = 5
 
     csv_flush_every_samples: int = 200
     csv_flush_every_seconds: float = 2.0
