@@ -3,10 +3,10 @@ from __future__ import annotations
 import csv
 import json
 import os
-import shutil
 import struct
 import threading
 import time
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -351,10 +351,10 @@ class CsvWriterService:
 
     def close_all(self) -> None:
         with self._lock:
-            keys = list(self._writers.keys())
-            for key in keys:
-                session_id, _device_id = key
-                self.close_session(session_id)
+            session_ids = sorted({key[0] for key in self._writers.keys()})
+
+        for session_id in session_ids:
+            self.close_session(session_id)
 
     def get_last_seq(self, session_id: str, device_id: str) -> int:
         with self._lock:
@@ -362,6 +362,27 @@ class CsvWriterService:
             if not state or state.last_seq is None:
                 return 0
             return state.last_seq
+
+    def get_last_seq_durable(self, session_id: str, device_id: str) -> int:
+        with self._lock:
+            state = self._writers.get((session_id, device_id))
+            if state and state.last_seq is not None:
+                return int(state.last_seq)
+
+        sensor_dir = self._settings.data_root / "sessions" / session_id / "sensor"
+        if not sensor_dir.exists():
+            return 0
+
+        last_seq = 0
+        for state_path in sensor_dir.glob(f"*_{device_id}.state.json"):
+            try:
+                payload = json.loads(state_path.read_text(encoding="utf-8"))
+                candidate = int(payload.get("last_seq", 0) or 0)
+                if candidate > last_seq:
+                    last_seq = candidate
+            except Exception:
+                continue
+        return last_seq
 
     def _flush_if_due(self, state: DeviceWriterState) -> None:
         now = time.monotonic()
@@ -392,22 +413,81 @@ class CsvWriterService:
         return "other"
 
     def _acquire_lock(self, lock_path: Path) -> None:
-        if lock_path.exists():
-            if self._settings.csv_allow_recover_stale_lock:
-                stale_name = lock_path.with_suffix(f".stale.{int(time.time())}.lock")
-                shutil.move(str(lock_path), str(stale_name))
-            else:
-                raise RuntimeError(f"writer lock exists: {lock_path}")
-
         payload = {
             "pid": os.getpid(),
             "acquired_at": datetime.now(UTC).isoformat(),
         }
-        lock_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        for _ in range(3):
+            if self._create_lock_exclusive(lock_path, payload):
+                return
+
+            if not self._settings.csv_allow_recover_stale_lock:
+                raise RuntimeError(f"writer lock exists: {lock_path}")
+
+            owner = self._read_lock_payload(lock_path)
+            owner_pid = int(owner.get("pid", 0) or 0) if owner else 0
+            owner_alive = self._is_pid_alive(owner_pid) if owner_pid > 0 else False
+            if owner_alive:
+                raise RuntimeError(f"writer lock active by pid={owner_pid}: {lock_path}")
+
+            stale_name = lock_path.with_suffix(f".stale.{int(time.time())}.lock")
+            with suppress(FileNotFoundError):
+                os.replace(str(lock_path), str(stale_name))
+
+        raise RuntimeError(f"failed acquiring writer lock after stale recovery attempts: {lock_path}")
 
     @staticmethod
-    def _release_lock(lock_path: Path) -> None:
+    def _create_lock_exclusive(lock_path: Path, payload: dict[str, Any]) -> bool:
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+        try:
+            fd = os.open(str(lock_path), flags)
+        except FileExistsError:
+            return False
+
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as file_obj:
+                file_obj.write(json.dumps(payload, ensure_ascii=True, indent=2))
+                file_obj.flush()
+                os.fsync(file_obj.fileno())
+        except Exception:
+            with suppress(Exception):
+                os.unlink(lock_path)
+            raise
+
+        return True
+
+    @staticmethod
+    def _read_lock_payload(lock_path: Path) -> dict[str, Any] | None:
+        if not lock_path.exists():
+            return None
+        try:
+            payload = json.loads(lock_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def _is_pid_alive(pid: int) -> bool:
+        if pid <= 0:
+            return False
+        if pid == os.getpid():
+            return True
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        return True
+
+    def _release_lock(self, lock_path: Path) -> None:
         if lock_path.exists():
+            owner = self._read_lock_payload(lock_path)
+            owner_pid = int(owner.get("pid", 0) or 0) if owner else 0
+            if owner_pid not in {0, os.getpid()}:
+                return
             lock_path.unlink()
 
     def _hydrate_state_from_disk(self, state: DeviceWriterState) -> None:
