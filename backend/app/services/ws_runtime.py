@@ -460,8 +460,11 @@ class WsRuntime:
             message.server_start_time_unix_ns = int(payload["server_start_time_unix_ns"])
         if payload.get("backend_last_seq") is not None:
             message.backend_last_seq = int(payload["backend_last_seq"])
-        if payload.get("command_id") is not None:
-            message.command_id = str(payload["command_id"])
+        command_id = payload.get("command_id")
+        if command_id is None and msg_type == "CLOCK_SYNC_PING":
+            command_id = payload.get("ping_id")
+        if command_id is not None:
+            message.command_id = str(command_id)
         if payload.get("ack") is not None:
             message.ack = bool(payload["ack"])
         if payload.get("device_unix_ns") is not None:
