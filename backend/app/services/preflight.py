@@ -21,6 +21,26 @@ def store_preflight_report(db: Session, report: dict, session_id: str | None = N
             bool(report.get("storage_path_writable", False)),
             f"free_bytes={report.get('storage_free_bytes', 0)}",
         ),
+        (
+            "webcam_connected",
+            bool(report.get("webcam_connected", False)),
+            str(report.get("webcam_detail", "")),
+        ),
+        (
+            "webcam_preview_ok",
+            bool(report.get("webcam_preview_ok", False)),
+            str(report.get("webcam_detail", "")),
+        ),
+        (
+            "webcam_fps_ok",
+            bool(report.get("webcam_fps_ok", False)),
+            f"fps={report.get('webcam_fps', 0.0)}",
+        ),
+        (
+            "webcam_storage_ok",
+            bool(report.get("webcam_storage_ok", False)),
+            f"free_bytes={report.get('storage_free_bytes', 0)}",
+        ),
         ("webcam_available", bool(report.get("webcam_available", False)), str(report.get("webcam_detail", ""))),
     ]
 
