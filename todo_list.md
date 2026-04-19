@@ -444,75 +444,75 @@ Roadmap ini mengikuti arsitektur terbaru:
 ## Phase 8: Flutter Mobile Node Refactor
 
 - [ ] Tutup gap arsitektur mobile agar sesuai Wi-Fi WebSocket `100 Hz` (blocker MVP end-to-end):
-  - [ ] hentikan dependensi jalur utama Bluetooth parser untuk mode koleksi utama.
-  - [ ] buat connection manager ke endpoint `/ws/device/{device_id}`.
-  - [ ] dukung command control dari backend: `START_SESSION`, `STOP_SESSION`, `CLOCK_SYNC`.
-  - [ ] ubah sensor ticker default ke target sampling `100 Hz` stabil.
-  - [ ] simpan data lokal durable sebelum upload (SQLite/local queue).
-  - [ ] upload `SensorBatch` Protobuf via Wi-Fi dengan retry + resume.
+  - [x] hentikan dependensi jalur utama Bluetooth parser untuk mode koleksi utama.
+  - [x] buat connection manager ke endpoint `/ws/device/{device_id}`.
+  - [x] dukung command control dari backend: `START_SESSION`, `STOP_SESSION`, `CLOCK_SYNC`.
+  - [x] ubah sensor ticker default ke target sampling `100 Hz` stabil.
+  - [x] simpan data lokal durable sebelum upload (SQLite/local queue).
+  - [x] upload `SensorBatch` Protobuf via Wi-Fi dengan retry + resume.
   - [ ] verifikasi flow end-to-end phone sebagai IMU node Wi-Fi hingga backend ingest.
 
-- [ ] Update dependency Flutter:
-  - [ ] `web_socket_channel`.
-  - [ ] Protobuf runtime Dart.
-  - [ ] `sqflite`.
-  - [ ] `path_provider`.
-  - [ ] `uuid`.
-  - [ ] `battery_plus`.
-  - [ ] `connectivity_plus`.
-- [ ] Buat setup screen:
-  - [ ] backend URL/IP laptop.
-  - [ ] device name.
-  - [ ] device role: chest/waist/thigh/other.
-  - [ ] device ID persistent.
-- [ ] Buat connection manager:
-  - [ ] connect ke `/ws/device/{device_id}`.
-  - [ ] auto reconnect.
-  - [ ] heartbeat.
-  - [ ] receive backend command.
-  - [ ] ack handling.
-- [ ] Buat sensor sampler 100 Hz:
-  - [ ] sampling dari internal IMU.
-  - [ ] normalize accelerometer ke g.
-  - [ ] normalize gyro ke deg/s.
-  - [ ] emit fixed target rate 100 Hz.
-- [ ] Buat local durable storage:
-  - [ ] SQLite table `local_sessions`.
-  - [ ] SQLite table `sensor_samples`.
-  - [ ] SQLite table `upload_batches`.
-- [ ] Semua sample wajib ditulis lokal dulu:
-  - [ ] `session_id`.
-  - [ ] `device_id`.
-  - [ ] `device_role`.
-  - [ ] `seq`.
-  - [ ] `elapsed_ms`.
-  - [ ] raw sensor values.
-  - [ ] `uploaded = false`.
-- [ ] Implement Protobuf batch uploader:
-  - [ ] batch 250-1000 sample.
-  - [ ] kirim saat online.
-  - [ ] retry saat gagal.
-  - [ ] mark uploaded setelah ACK.
-- [ ] Implement session command:
-  - [ ] `START_SESSION` mulai local recording.
-  - [ ] `STOP_SESSION` stop local recording.
-  - [ ] `SYNC_REQUIRED` upload missing seq.
-- [ ] Implement offline mode:
-  - [ ] jika network putus, recording lokal tetap lanjut.
-  - [ ] setelah reconnect, upload backlog.
-- [ ] Implement crash recovery:
-  - [ ] detect unfinished local session.
-  - [ ] tampilkan recovered state.
-  - [ ] lanjut sync pending data.
+- [x] Update dependency Flutter:
+  - [x] `web_socket_channel`.
+  - [x] Protobuf runtime Dart.
+  - [x] `sqflite`.
+  - [x] `path_provider`.
+  - [x] `uuid`.
+  - [x] `battery_plus`.
+  - [x] `connectivity_plus`.
+- [x] Buat setup screen:
+  - [x] backend URL/IP laptop.
+  - [x] device name.
+  - [x] device role: chest/waist/thigh/other.
+  - [x] device ID persistent.
+- [x] Buat connection manager:
+  - [x] connect ke `/ws/device/{device_id}`.
+  - [x] auto reconnect.
+  - [x] heartbeat.
+  - [x] receive backend command.
+  - [x] ack handling.
+- [x] Buat sensor sampler 100 Hz:
+  - [x] sampling dari internal IMU.
+  - [x] normalize accelerometer ke g.
+  - [x] normalize gyro ke deg/s.
+  - [x] emit fixed target rate 100 Hz.
+- [x] Buat local durable storage:
+  - [x] SQLite table `local_sessions`.
+  - [x] SQLite table `sensor_samples`.
+  - [x] SQLite table `upload_batches`.
+- [x] Semua sample wajib ditulis lokal dulu:
+  - [x] `session_id`.
+  - [x] `device_id`.
+  - [x] `device_role`.
+  - [x] `seq`.
+  - [x] `elapsed_ms`.
+  - [x] raw sensor values.
+  - [x] `uploaded = false`.
+- [x] Implement Protobuf batch uploader:
+  - [x] batch 250-1000 sample.
+  - [x] kirim saat online.
+  - [x] retry saat gagal.
+  - [x] mark uploaded setelah ACK.
+- [x] Implement session command:
+  - [x] `START_SESSION` mulai local recording.
+  - [x] `STOP_SESSION` stop local recording.
+  - [x] `SYNC_REQUIRED` upload missing seq.
+- [x] Implement offline mode:
+  - [x] jika network putus, recording lokal tetap lanjut.
+  - [x] setelah reconnect, upload backlog.
+- [x] Implement crash recovery:
+  - [x] detect unfinished local session.
+  - [x] tampilkan recovered state.
+  - [x] lanjut sync pending data.
 - [ ] Buat mobile status UI:
-  - [ ] connected/offline.
-  - [ ] recording/not recording.
-  - [ ] current session.
-  - [ ] local sample count.
-  - [ ] pending upload.
-  - [ ] battery.
-  - [ ] storage free.
-  - [ ] effective Hz.
+  - [x] connected/offline.
+  - [x] recording/not recording.
+  - [x] current session.
+  - [x] local sample count.
+  - [x] pending upload.
+  - [x] battery.
+  - [x] storage free.
+  - [x] effective Hz.
 
 ---
 
