@@ -156,7 +156,7 @@ def test_ws_device_handshake_reads_durable_last_seq(client: TestClient, seeded_d
         assert hello_ack["backend_last_seq"] == 42
 
 
-def test_ws_handshake_rejects_non_running_session(client: TestClient, session_factory: sessionmaker) -> None:
+def test_ws_handshake_allows_created_session_for_preflight(client: TestClient, session_factory: sessionmaker) -> None:
     session_id = "20260419_143022_A1B2C3D4"
     device_id = "DEVICE-CHEST-001"
     with session_factory() as db:
@@ -167,9 +167,9 @@ def test_ws_handshake_rejects_non_running_session(client: TestClient, session_fa
 
     with client.websocket_connect(f"/ws/device/{device_id}") as websocket:
         websocket.send_text(_hello_payload(session_id, device_id))
-        error = websocket.receive_json()
-        assert error["type"] == "ERROR"
-        assert error["code"] == "SESSION_NOT_RUNNING"
+        hello_ack = websocket.receive_json()
+        assert hello_ack["type"] == "HELLO_ACK"
+        assert hello_ack["session_state"] == "CREATED"
 
 
 def test_ws_handshake_rejects_device_not_mapped(client: TestClient, session_factory: sessionmaker) -> None:
@@ -182,9 +182,28 @@ def test_ws_handshake_rejects_device_not_mapped(client: TestClient, session_fact
 
     with client.websocket_connect(f"/ws/device/{device_id}") as websocket:
         websocket.send_text(_hello_payload(session_id, device_id))
+        hello_ack = websocket.receive_json()
+        assert hello_ack["type"] == "HELLO_ACK"
+
+
+def test_ws_ingest_rejects_when_session_not_running_even_if_connected(client: TestClient, session_factory: sessionmaker) -> None:
+    session_id = "20260419_143022_A1B2C3D4"
+    device_id = "DEVICE-CHEST-001"
+    with session_factory() as db:
+        db.add(Device(device_id=device_id, device_role="chest", connected=False))
+        db.add(SessionModel(session_id=session_id, status="CREATED", preflight_passed=True))
+        db.commit()
+
+    payload = _build_sensor_batch(session_id, device_id, start_seq=1, end_seq=2)
+    with client.websocket_connect(f"/ws/device/{device_id}") as websocket:
+        websocket.send_text(_hello_payload(session_id, device_id))
+        hello_ack = websocket.receive_json()
+        assert hello_ack["type"] == "HELLO_ACK"
+
+        websocket.send_bytes(payload)
         error = websocket.receive_json()
         assert error["type"] == "ERROR"
-        assert error["code"] == "DEVICE_NOT_IN_SESSION"
+        assert error["code"] == "SESSION_NOT_RUNNING"
 
 
 def test_ws_device_ack_and_duplicate_batch(client: TestClient, seeded_device_session: tuple[str, str]) -> None:
