@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     backend_host: str = "0.0.0.0"
     backend_rest_port: int = 8000
     backend_ws_port: int = 8001
+    cors_allow_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     data_root: Path = Path("./data")
     database_url: str | None = None
@@ -59,6 +60,10 @@ class Settings(BaseSettings):
     @property
     def required_roles(self) -> list[str]:
         return [r.strip() for r in self.required_device_roles.split(",") if r.strip()]
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_allow_origins.split(",") if origin.strip()]
 
     @property
     def resolved_database_url(self) -> str:

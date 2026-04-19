@@ -373,71 +373,71 @@ Roadmap ini mengikuti arsitektur terbaru:
 ## Phase 7: Dashboard Browser
 
 - [ ] Buat dashboard frontend dengan next-js pakai shadcdn-ui dan poppins font.
-- [ ] Buat layout utama:
-  - [ ] session header.
-  - [ ] elapsed timer.
-  - [ ] countdown barrier start realtime menuju `start_at_unix_ns`.
-  - [ ] device health cards.
-  - [ ] webcam status card.
-  - [ ] realtime graph area.
-  - [ ] annotation control.
-  - [ ] annotation list.
-  - [ ] preflight checklist.
-  - [ ] storage/artifact status.
-- [ ] Buat preflight checklist:
-  - [ ] backend healthy.
-  - [ ] storage path writable.
-  - [ ] storage free space cukup.
-  - [ ] webcam connected.
-  - [ ] webcam frame preview ok.
-  - [ ] semua required phone connected.
-  - [ ] tiap phone role sudah benar.
-  - [ ] tiap phone battery cukup.
-  - [ ] tiap phone storage cukup.
-  - [ ] clock sync quality ok.
-  - [ ] expected sampling rate 100 Hz.
-- [ ] Buat control session:
-  - [ ] create session.
-  - [ ] start session.
-  - [ ] stop session.
-  - [ ] finalize session.
-  - [ ] override preflight dengan alasan.
-- [ ] Buat annotation UI:
-  - [ ] pilih label.
-  - [ ] start annotation.
-  - [ ] stop annotation.
-  - [ ] auto-close annotation saat session stop.
-  - [ ] edit label/time/notes.
-  - [ ] delete annotation.
-- [ ] Buat annotation list:
-  - [ ] label.
-  - [ ] start time.
-  - [ ] end time.
-  - [ ] duration.
-  - [ ] status active/closed.
-- [ ] Buat realtime graphs:
-  - [ ] per role/device: chest, waist, thigh.
-  - [ ] accelerometer x/y/z.
-  - [ ] gyroscope x/y/z.
-  - [ ] rolling window 10-30 detik.
-  - [ ] tampilkan effective Hz.
-- [ ] Buat video panel:
-  - [ ] webcam preview sebelum record.
-  - [ ] recording indicator.
-  - [ ] elapsed video time.
-  - [ ] dropped frame warning jika tersedia.
-  - [ ] toggle `Anonymize video` (Yes/No), default `No` (tidak otomatis).
-  - [ ] tombol `Anonymize Now` untuk trigger manual proses anonymize.
-  - [ ] saat toggle `Yes`, saat stop/finalize tampilkan konfirmasi jalankan anonymize.
-  - [ ] panggil API `POST /sessions/{session_id}/video/anonymize` hanya jika toggle `Yes` atau tombol manual ditekan.
-  - [ ] tampilkan progress/status anonymize: pending/running/completed/failed.
-  - [ ] tampilkan path output anonymized video + metadata setelah selesai.
-- [ ] Buat artifact panel:
-  - [ ] CSV per device.
-  - [ ] video file.
-  - [ ] manifest file.
-  - [ ] export zip.
-  - [ ] upload-to-FAMS instructions/status.
+- [x] Buat layout utama:
+  - [x] session header.
+  - [x] elapsed timer.
+  - [x] countdown barrier start realtime menuju `start_at_unix_ns`.
+  - [x] device health cards.
+  - [x] webcam status card.
+  - [x] realtime graph area.
+  - [x] annotation control.
+  - [x] annotation list.
+  - [x] preflight checklist.
+  - [x] storage/artifact status.
+- [x] Buat preflight checklist:
+  - [x] backend healthy.
+  - [x] storage path writable.
+  - [x] storage free space cukup.
+  - [x] webcam connected.
+  - [x] webcam frame preview ok.
+  - [x] semua required phone connected.
+  - [x] tiap phone role sudah benar.
+  - [x] tiap phone battery cukup.
+  - [x] tiap phone storage cukup.
+  - [x] clock sync quality ok.
+  - [x] expected sampling rate 100 Hz.
+- [x] Buat control session:
+  - [x] create session.
+  - [x] start session.
+  - [x] stop session.
+  - [x] finalize session.
+  - [x] override preflight dengan alasan.
+- [x] Buat annotation UI:
+  - [x] pilih label.
+  - [x] start annotation.
+  - [x] stop annotation.
+  - [x] auto-close annotation saat session stop.
+  - [x] edit label/time/notes.
+  - [x] delete annotation.
+- [x] Buat annotation list:
+  - [x] label.
+  - [x] start time.
+  - [x] end time.
+  - [x] duration.
+  - [x] status active/closed.
+- [x] Buat realtime graphs:
+  - [x] per role/device: chest, waist, thigh.
+  - [x] accelerometer x/y/z.
+  - [x] gyroscope x/y/z.
+  - [x] rolling window 10-30 detik.
+  - [x] tampilkan effective Hz.
+- [x] Buat video panel:
+  - [x] webcam preview sebelum record.
+  - [x] recording indicator.
+  - [x] elapsed video time.
+  - [x] dropped frame warning jika tersedia.
+  - [x] toggle `Anonymize video` (Yes/No), default `No` (tidak otomatis).
+  - [x] tombol `Anonymize Now` untuk trigger manual proses anonymize.
+  - [x] saat toggle `Yes`, saat stop/finalize tampilkan konfirmasi jalankan anonymize.
+  - [x] panggil API `POST /sessions/{session_id}/video/anonymize` hanya jika toggle `Yes` atau tombol manual ditekan.
+  - [x] tampilkan progress/status anonymize: pending/running/completed/failed.
+  - [x] tampilkan path output anonymized video + metadata setelah selesai.
+- [x] Buat artifact panel:
+  - [x] CSV per device.
+  - [x] video file.
+  - [x] manifest file.
+  - [x] export zip.
+  - [x] upload-to-FAMS instructions/status.
 
 ---
 
