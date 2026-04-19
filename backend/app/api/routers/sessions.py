@@ -11,11 +11,15 @@ from app.db.models import Session as SessionModel
 from app.db.session import get_db
 from app.schemas.sessions import SessionCreateRequest, SessionFinalizeRequest, SessionResponse, SessionStatusResponse
 from app.services.artifacts import ensure_session_layout, finalize_session_artifacts, seed_session_artifacts
+from app.services.csv_writer import csv_writer_service
 from app.services.preflight import is_preflight_passed, store_preflight_report
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 DBSession = Annotated[Session, Depends(get_db)]
 SESSION_ID_PATTERN = r"^\d{8}_\d{6}_[A-F0-9]{8}$"
+SESSION_RESPONSES_404 = {404: {"description": "Session not found"}}
+SESSION_RESPONSES_409 = {409: {"description": "Invalid session state transition"}}
+SESSION_RESPONSES_400 = {400: {"description": "Bad request"}}
 
 
 def _generate_session_id() -> str:
@@ -24,7 +28,7 @@ def _generate_session_id() -> str:
     return f"{timestamp}_{suffix}"
 
 
-@router.post("")
+@router.post("", responses={400: {"description": "Preflight failed"}, 409: {"description": "Another active session exists"}})
 def create_session(payload: SessionCreateRequest, request: Request, db: DBSession) -> SessionResponse:
     blocking = (
         db.query(SessionModel)
@@ -56,7 +60,7 @@ def create_session(payload: SessionCreateRequest, request: Request, db: DBSessio
     return session
 
 
-@router.post("/{session_id}/start")
+@router.post("/{session_id}/start", responses={400: {"description": "Preflight failed"}, 404: {"description": "Session not found"}, 409: {"description": "Invalid session state transition"}})
 def start_session(
     session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)],
     db: DBSession,
@@ -75,6 +79,7 @@ def start_session(
 
     try:
         session = session_manager.start_session(db, session_id)
+        csv_writer_service.prepare_session_writers(db, session_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SessionStateError as exc:
@@ -82,10 +87,12 @@ def start_session(
     return session
 
 
-@router.post("/{session_id}/stop")
+@router.post("/{session_id}/stop", responses={404: {"description": "Session not found"}, 409: {"description": "Invalid session state transition"}})
 def stop_session(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)], db: DBSession) -> SessionResponse:
     try:
         session = session_manager.stop_session(db, session_id)
+        csv_writer_service.flush_session(session_id)
+        csv_writer_service.close_session(session_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SessionStateError as exc:
@@ -93,7 +100,7 @@ def stop_session(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)], d
     return session
 
 
-@router.get("/{session_id}")
+@router.get("/{session_id}", responses=SESSION_RESPONSES_404)
 def get_session(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)], db: DBSession) -> SessionResponse:
     session = db.get(SessionModel, session_id)
     if not session:
@@ -101,7 +108,7 @@ def get_session(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)], db
     return session
 
 
-@router.get("/{session_id}/status")
+@router.get("/{session_id}/status", responses=SESSION_RESPONSES_404)
 def get_session_status(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)], db: DBSession) -> SessionStatusResponse:
     try:
         status = session_manager.get_status(db, session_id)
@@ -110,7 +117,7 @@ def get_session_status(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTER
     return SessionStatusResponse(session_id=session_id, status=status)
 
 
-@router.post("/{session_id}/finalize")
+@router.post("/{session_id}/finalize", responses={404: {"description": "Session not found"}, 409: {"description": "Invalid session state transition"}})
 def finalize_session(
     session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)],
     payload: SessionFinalizeRequest,
