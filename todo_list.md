@@ -128,11 +128,11 @@ Roadmap ini mengikuti arsitektur terbaru:
   - [x] port WebSocket.
   - [x] storage root SSD.
   - [x] webcam device index/path.
-- [-] Buat app lifecycle:
+- [x] Buat app lifecycle:
   - [x] startup check.
   - [x] storage directory check.
   - [x] webcam availability check.
-  - [ ] graceful shutdown.
+  - [x] graceful shutdown.
 - [-] Buat session manager in-memory + persistent metadata.
 - [x] Buat model metadata:
   - [x] `Device`.
@@ -162,10 +162,10 @@ Roadmap ini mengikuti arsitektur terbaru:
   - [x] `GET /sessions/{session_id}/annotations`.
   - [x] `PATCH /annotations/{annotation_id}`.
   - [x] `DELETE /annotations/{annotation_id}`.
-- [-] Buat REST endpoint artifact:
+- [x] Buat REST endpoint artifact:
   - [x] `GET /sessions/{session_id}/artifacts`.
-  - [-] `GET /sessions/{session_id}/manifest.json`.
-  - [-] `GET /sessions/{session_id}/export.zip`.
+  - [x] `GET /sessions/{session_id}/manifest.json`.
+  - [x] `GET /sessions/{session_id}/export.zip`.
 - [x] Buat endpoint health:
   - [x] `GET /health`.
   - [x] `GET /preflight`.
@@ -179,50 +179,48 @@ Roadmap ini mengikuti arsitektur terbaru:
 - Metadata model: `backend/app/db/models.py`.
 - Router endpoints: `backend/app/api/routers/`.
 - Status parsial yang masih perlu penyelesaian:
-  - graceful shutdown masih placeholder hook.
-  - artifact `manifest.json` dan `export.zip` belum otomatis diproduksi oleh worker finalization.
   - session manager sudah enforce state machine, tapi belum ada recovery state lintas restart (akan diperdalam di fase berikutnya).
 
 ---
 
 ## Phase 3: Device WebSocket + ACK Protocol
 
-- [ ] Buat WebSocket untuk mobile nodes:
+- [x] Buat WebSocket untuk mobile nodes:
   ```text
   /ws/device/{device_id}
   ```
-- [ ] Buat WebSocket untuk dashboard:
+- [x] Buat WebSocket untuk dashboard:
   ```text
   /ws/dashboard/{session_id}
   ```
-- [ ] Implement device handshake:
-  - [ ] device kirim `HELLO`.
-  - [ ] backend validasi `device_id`.
-  - [ ] backend assign/konfirmasi `device_role`.
-  - [ ] backend kirim current session state.
-- [ ] Implement stream Protobuf dari phone:
-  - [ ] binary WebSocket frame untuk `SensorBatch`.
-  - [ ] fallback JSON hanya untuk debug.
-- [ ] Implement ACK dari backend:
-  - [ ] backend ack `last_received_seq`.
-  - [ ] backend ack per batch.
-  - [ ] duplicate batch tidak membuat data dobel.
-- [ ] Implement reconnect:
-  - [ ] phone kirim `local_last_seq`.
-  - [ ] backend balas `backend_last_seq`.
-  - [ ] phone upload missing batch dari seq berikutnya.
-- [ ] Implement timeout:
-  - [ ] device dianggap offline jika heartbeat hilang.
-  - [ ] dashboard menerima event device offline.
-- [ ] Implement dashboard forwarding:
-  - [ ] realtime sensor preview.
-  - [ ] status device.
-  - [ ] annotation events.
-  - [ ] video recorder status.
-- [ ] Tambahkan backpressure protection:
-  - [ ] limit batch size.
-  - [ ] drop hanya untuk realtime preview, bukan durable recording.
-  - [ ] warning kalau backend tidak sanggup menerima 100 Hz per device.
+- [x] Implement device handshake:
+  - [x] device kirim `HELLO`.
+  - [x] backend validasi `device_id`.
+  - [x] backend assign/konfirmasi `device_role`.
+  - [x] backend kirim current session state.
+- [x] Implement stream Protobuf dari phone:
+  - [x] binary WebSocket frame untuk `SensorBatch`.
+  - [x] fallback JSON hanya untuk debug.
+- [x] Implement ACK dari backend:
+  - [x] backend ack `last_received_seq`.
+  - [x] backend ack per batch.
+  - [x] duplicate batch tidak membuat data dobel.
+- [x] Implement reconnect:
+  - [x] phone kirim `local_last_seq`.
+  - [x] backend balas `backend_last_seq`.
+  - [x] phone upload missing batch dari seq berikutnya.
+- [x] Implement timeout:
+  - [x] device dianggap offline jika heartbeat hilang.
+  - [x] dashboard menerima event device offline.
+- [x] Implement dashboard forwarding:
+  - [x] realtime sensor preview.
+  - [x] status device.
+  - [x] annotation events.
+  - [x] video recorder status.
+- [x] Tambahkan backpressure protection:
+  - [x] limit batch size.
+  - [x] drop hanya untuk realtime preview, bukan durable recording.
+  - [x] warning kalau backend tidak sanggup menerima 100 Hz per device.
 
 ---
 
@@ -321,6 +319,8 @@ Roadmap ini mengikuti arsitektur terbaru:
   - [x] jika webcam tidak tersedia, session start diblokir kecuali operator override.
   - [x] jika video recorder gagal saat session berjalan, dashboard beri warning besar.
   - [x] session tetap bisa dilanjutkan atau dihentikan sesuai keputusan operator.
+
+- [ ] Integrasi deface untuk auto anonim muka di video anotasi
 
 ### Phase 5 Notes
 

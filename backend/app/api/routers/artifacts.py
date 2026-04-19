@@ -23,7 +23,7 @@ def list_artifacts(session_id: str, db: DBSession) -> list[ArtifactResponse]:
     )
 
 
-@router.get("/sessions/{session_id}/manifest.json")
+@router.get("/sessions/{session_id}/manifest.json", responses={404: {"description": "Manifest not found"}})
 def get_manifest(session_id: str) -> FileResponse:
     settings = get_settings()
     path = settings.data_root / "sessions" / session_id / "manifest.json"
@@ -32,7 +32,7 @@ def get_manifest(session_id: str) -> FileResponse:
     return FileResponse(path=str(path), media_type="application/json", filename="manifest.json")
 
 
-@router.get("/sessions/{session_id}/export.zip")
+@router.get("/sessions/{session_id}/export.zip", responses={404: {"description": "Export zip not found"}})
 def get_export_zip(session_id: str) -> FileResponse:
     settings = get_settings()
     path = settings.data_root / "sessions" / session_id / "export" / f"{session_id}_dataset.zip"

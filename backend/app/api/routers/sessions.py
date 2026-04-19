@@ -18,6 +18,7 @@ from app.services.artifacts import ensure_session_layout, finalize_session_artif
 from app.services.csv_writer import csv_writer_service
 from app.services.preflight import is_preflight_passed, store_preflight_report
 from app.services.video_recorder import video_recorder_service
+from app.services.ws_runtime import ws_runtime
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 DBSession = Annotated[Session, Depends(get_db)]
@@ -39,8 +40,8 @@ def _sidecar_path_for_session(session_id: str):
     return settings.data_root / "sessions" / session_id / "video" / f"{session_id}_webcam.json"
 
 
-@router.post("", responses={400: {"description": "Preflight failed"}, 409: {"description": "Another active session exists"}})
-def create_session(payload: SessionCreateRequest, request: Request, db: DBSession) -> SessionResponse:
+@router.post("", responses={400: {"description": "Preflight failed"}, 409: {"description": "Another session is active"}})
+async def create_session(payload: SessionCreateRequest, request: Request, db: DBSession) -> SessionResponse:
     blocking = (
         db.query(SessionModel)
         .filter(SessionModel.status.in_(["ENDING", "SYNCING", "RUNNING", "CREATED"]))
@@ -68,11 +69,20 @@ def create_session(payload: SessionCreateRequest, request: Request, db: DBSessio
     request.app.state.preflight_report = server_report
     store_preflight_report(db, server_report, session_id=session_id)
 
+    await ws_runtime.publish_session_event(
+        session_id,
+        {
+            "type": "SESSION_STATE",
+            "session_id": session_id,
+            "status": session.status,
+        },
+    )
+
     return session
 
 
 @router.post("/{session_id}/start", responses={400: {"description": "Preflight failed"}, 404: {"description": "Session not found"}, 409: {"description": "Invalid session state transition"}})
-def start_session(
+async def start_session(
     session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)],
     db: DBSession,
 ) -> SessionResponse:
@@ -106,11 +116,28 @@ def start_session(
     except SessionStateError as exc:
         video_recorder_service.stop_session_recording(db, session_id, suppress_errors=True)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await ws_runtime.publish_session_event(
+        session_id,
+        {
+            "type": "SESSION_STATE",
+            "session_id": session_id,
+            "status": session.status,
+        },
+    )
+    await ws_runtime.publish_session_event(
+        session_id,
+        {
+            "type": "VIDEO_RECORDER_STATUS",
+            "session_id": session_id,
+            "status": "recording",
+        },
+    )
     return session
 
 
 @router.post("/{session_id}/stop", responses={404: {"description": "Session not found"}, 409: {"description": "Invalid session state transition"}})
-def stop_session(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)], db: DBSession) -> SessionResponse:
+async def stop_session(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)], db: DBSession) -> SessionResponse:
     try:
         session = session_manager.stop_session(db, session_id)
         csv_writer_service.flush_session(session_id)
@@ -120,6 +147,23 @@ def stop_session(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)], d
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SessionStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await ws_runtime.publish_session_event(
+        session_id,
+        {
+            "type": "SESSION_STATE",
+            "session_id": session_id,
+            "status": session.status,
+        },
+    )
+    await ws_runtime.publish_session_event(
+        session_id,
+        {
+            "type": "VIDEO_RECORDER_STATUS",
+            "session_id": session_id,
+            "status": "stopped",
+        },
+    )
     return session
 
 
@@ -176,7 +220,7 @@ def get_session_status(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTER
 
 
 @router.post("/{session_id}/finalize", responses={404: {"description": "Session not found"}, 409: {"description": "Invalid session state transition"}})
-def finalize_session(
+async def finalize_session(
     session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)],
     payload: SessionFinalizeRequest,
     db: DBSession,
@@ -188,4 +232,21 @@ def finalize_session(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except SessionStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await ws_runtime.publish_session_event(
+        session_id,
+        {
+            "type": "SESSION_STATE",
+            "session_id": session_id,
+            "status": session.status,
+        },
+    )
+    await ws_runtime.publish_session_event(
+        session_id,
+        {
+            "type": "VIDEO_RECORDER_STATUS",
+            "session_id": session_id,
+            "status": "idle",
+        },
+    )
     return session
