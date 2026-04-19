@@ -3,12 +3,14 @@ import contextlib
 import json
 import logging
 import time
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import WebSocket
 
 from app.core.config import get_settings
+from app.services.csv_writer import csv_writer_service
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,7 @@ class WsRuntime:
     def __init__(self) -> None:
         self._settings = get_settings()
         self._lock = asyncio.Lock()
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._device_connections: dict[str, WebSocket] = {}
         self._dashboard_connections: dict[str, list[DashboardConnection]] = {}
         self._device_states: dict[tuple[str, str], DeviceStreamState] = {}
@@ -41,6 +44,7 @@ class WsRuntime:
         self._timeout_task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
+        self._loop = asyncio.get_running_loop()
         if self._timeout_task is None or self._timeout_task.done():
             self._timeout_task = asyncio.create_task(self._timeout_loop(), name="ws-device-timeout-loop")
 
@@ -138,19 +142,24 @@ class WsRuntime:
         end_seq: int,
         sample_count: int,
         preview_payload: dict[str, Any],
+        duplicate_override: bool | None = None,
+        last_received_seq_override: int | None = None,
     ) -> dict[str, Any]:
         now = time.monotonic()
         async with self._lock:
             state = self._device_states.setdefault((session_id, device_id), DeviceStreamState())
             state.last_heartbeat_monotonic = now
 
-            duplicate = end_seq <= state.last_received_seq
+            duplicate = end_seq <= state.last_received_seq if duplicate_override is None else duplicate_override
             if duplicate:
                 state.duplicate_batches += 1
             else:
-                state.last_received_seq = end_seq
+                state.last_received_seq = end_seq if last_received_seq_override is None else last_received_seq_override
                 state.received_batches += 1
                 state.total_samples += sample_count
+
+            if duplicate and last_received_seq_override is not None:
+                state.last_received_seq = last_received_seq_override
 
             overload = sample_count > self._settings.ws_max_batch_samples
             if overload:
@@ -181,12 +190,20 @@ class WsRuntime:
         }
 
     async def get_backend_last_seq(self, session_id: str, device_id: str) -> int:
+        in_memory_last_seq = 0
         async with self._lock:
             state = self._device_states.get((session_id, device_id))
-            return 0 if state is None else state.last_received_seq
+            if state is not None:
+                in_memory_last_seq = state.last_received_seq
+
+        durable_last_seq = csv_writer_service.get_last_seq_durable(session_id, device_id)
+        return max(in_memory_last_seq, durable_last_seq)
 
     async def publish_session_event(self, session_id: str, payload: dict[str, Any]) -> None:
         await self._broadcast(session_id, payload, drop_if_busy=False)
+
+    def publish_session_event_sync(self, session_id: str, payload: dict[str, Any]) -> Future[Any] | None:
+        return self._submit_from_thread(self.publish_session_event(session_id, payload))
 
     async def publish_annotation_event(self, session_id: str, payload: dict[str, Any]) -> None:
         await self._broadcast(session_id, payload, drop_if_busy=True)
@@ -202,8 +219,17 @@ class WsRuntime:
                 "device_id": device_id,
                 "warning": warning,
             },
-            drop_if_busy=False,
+            drop_if_busy=True,
         )
+
+    def publish_warning_sync(self, session_id: str, device_id: str, warning: str) -> Future[Any] | None:
+        return self._submit_from_thread(self.publish_warning(session_id, device_id, warning))
+
+    def _submit_from_thread(self, coroutine: Any) -> Future[Any] | None:
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return None
+        return asyncio.run_coroutine_threadsafe(coroutine, loop)
 
     async def publish_preview_event(
         self,
@@ -230,8 +256,36 @@ class WsRuntime:
         async with self._lock:
             connections = list(self._dashboard_connections.get(session_id, []))
 
+        stale, dropped_preview = await self._enqueue_payload_for_connections(
+            connections=connections,
+            payload=payload,
+            drop_if_busy=drop_if_busy,
+            session_id=session_id,
+        )
+
+        if dropped_preview and payload.get("type") == "SENSOR_PREVIEW":
+            warning_payload = {
+                "type": "INGEST_WARNING",
+                "device_id": payload.get("device_id", "unknown"),
+                "warning": "dashboard backpressure, preview event dropped",
+            }
+            self._enqueue_warning_non_blocking(connections, warning_payload)
+
+        if stale:
+            for connection in stale:
+                await self.unregister_dashboard(session_id, connection)
+
+    async def _enqueue_payload_for_connections(
+        self,
+        *,
+        connections: list[DashboardConnection],
+        payload: dict[str, Any],
+        drop_if_busy: bool,
+        session_id: str,
+    ) -> tuple[list[DashboardConnection], bool]:
         stale: list[DashboardConnection] = []
         dropped_preview = False
+
         for connection in connections:
             try:
                 if drop_if_busy:
@@ -244,19 +298,15 @@ class WsRuntime:
             except Exception:
                 stale.append(connection)
 
-        if dropped_preview and payload.get("type") == "SENSOR_PREVIEW":
-            warning_payload = {
-                "type": "INGEST_WARNING",
-                "device_id": payload.get("device_id", "unknown"),
-                "warning": "dashboard backpressure, preview event dropped",
-            }
-            for connection in connections:
-                with contextlib.suppress(Exception):
-                    await connection.queue.put(warning_payload)
+        return stale, dropped_preview
 
-        if stale:
-            for connection in stale:
-                await self.unregister_dashboard(session_id, connection)
+    @staticmethod
+    def _enqueue_warning_non_blocking(connections: list[DashboardConnection], warning_payload: dict[str, Any]) -> None:
+        for connection in connections:
+            try:
+                connection.queue.put_nowait(warning_payload)
+            except Exception:
+                continue
 
     async def snapshot_for_dashboard(self, session_id: str) -> dict[str, Any]:
         async with self._lock:
