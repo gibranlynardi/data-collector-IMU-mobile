@@ -1,279 +1,218 @@
 import 'package:flutter/material.dart';
-import 'dart:async';
-import '../services/bluetooth_manager.dart';
-import '../services/internal_sensor_manager.dart';
-import '../services/csv_logger.dart';
-import '../widgets/graph_widget.dart';
-import '../models/sensor_packet.dart';
+
+import '../models/node_config.dart';
+import '../services/backend_client.dart';
+import '../services/device_node_controller.dart';
+import '../services/local_store.dart';
+import '../services/node_config_store.dart';
+import '../services/sensor_sampler.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
   @override
-  _DashboardScreenState createState() => _DashboardScreenState();
+  State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  final TextEditingController _fileNameController = TextEditingController(text: "Activity_Data");
-  String _statusMessage = "Ready";
-  
-  bool _useInternalSensor = false; 
-  StreamSubscription? _dataSub;
-  Stream<SensorPacket>? _currentStream;
-
-  final List<int> _integerOptions = List.generate(11, (index) => index);
-  final List<int> _frequencyOptions = [1, 5, 10, 20, 40, 50, 100]; 
-  
-  int _selectedLocation = 0;
-  int _selectedLabel = 0;
-  int _selectedFrequency = 50; 
+  late final DeviceNodeController _controller;
+  late final TextEditingController _backendController;
+  late final TextEditingController _wsPortController;
+  late final TextEditingController _deviceIdController;
+  late final TextEditingController _deviceRoleController;
+  late final TextEditingController _displayNameController;
+  late final TextEditingController _sessionIdController;
 
   @override
   void initState() {
     super.initState();
-    _initStream();
-  }
+    _controller = DeviceNodeController(
+      configStore: NodeConfigStore(),
+      localStore: LocalStore.instance,
+      backendClient: BackendClient(),
+      sensorSampler: SensorSampler(),
+    );
 
-  void _initStream() {
-    _dataSub?.cancel();
+    _backendController = TextEditingController();
+    _wsPortController = TextEditingController();
+    _deviceIdController = TextEditingController();
+    _deviceRoleController = TextEditingController();
+    _displayNameController = TextEditingController();
+    _sessionIdController = TextEditingController();
 
-    if (_useInternalSensor) {
-      InternalSensorManager().start(frequency: _selectedFrequency);
-      _currentStream = InternalSensorManager().dataStream;
-    } else {
-      InternalSensorManager().stop();
-      _currentStream = BluetoothManager().dataStream;
-    }
-
-    _dataSub = _currentStream!.listen((packet) {
-      if (CsvLogger().isRecording) {
-        CsvLogger().currentLocation = _selectedLocation;
-        CsvLogger().currentLabel = _selectedLabel;
-        CsvLogger().writePacket(packet);
+    _controller.initialize().then((_) {
+      final config = _controller.config;
+      _backendController.text = config.backendBaseUrl;
+      _wsPortController.text = config.wsPort.toString();
+      _deviceIdController.text = config.deviceId;
+      _deviceRoleController.text = config.deviceRole;
+      _displayNameController.text = config.displayName;
+      _sessionIdController.text = config.sessionId;
+      if (mounted) {
+        setState(() {});
       }
     });
-    
-    setState(() {});
   }
 
   @override
   void dispose() {
-    _dataSub?.cancel();
-    InternalSensorManager().stop(); 
+    _controller.disposeController();
+    _controller.dispose();
+
+    _backendController.dispose();
+    _wsPortController.dispose();
+    _deviceIdController.dispose();
+    _deviceRoleController.dispose();
+    _displayNameController.dispose();
+    _sessionIdController.dispose();
     super.dispose();
+  }
+
+  Future<void> _saveConfig() async {
+    final wsPort = int.tryParse(_wsPortController.text.trim()) ?? 8001;
+    final nextConfig = NodeConfig(
+      backendBaseUrl: _backendController.text.trim(),
+      wsPort: wsPort,
+      deviceId: _deviceIdController.text.trim().toUpperCase(),
+      deviceRole: _deviceRoleController.text.trim().toLowerCase(),
+      displayName: _displayNameController.text.trim(),
+      sessionId: _sessionIdController.text.trim().toUpperCase(),
+    );
+    await _controller.saveConfig(nextConfig);
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Config tersimpan')));
   }
 
   @override
   Widget build(BuildContext context) {
-    final isRecording = CsvLogger().isRecording;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("IMU Collector"),
-        backgroundColor: isRecording ? Colors.red : Colors.deepPurple,
-        actions: [
-          Row(
-            children: [
-              Text(_useInternalSensor ? "HP SENSORS" : "BLUETOOTH", style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-              Switch(
-                value: _useInternalSensor,
-                activeColor: Colors.orange,
-                onChanged: (val) {
-                  setState(() {
-                    _useInternalSensor = val;
-                    _initStream();
-                  });
-                },
-              ),
-            ],
-          )
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            flex: 2,
-            child: _currentStream == null 
-              ? const Center(child: CircularProgressIndicator()) 
-              : ListView(
-                  padding: const EdgeInsets.all(5),
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.all(5), 
-                      child: Text(
-                        "Accelerometer (${_useInternalSensor ? "$_selectedFrequency Hz" : "Ext"})", 
-                        style: const TextStyle(fontWeight: FontWeight.bold)
-                      )
-                    ),
-                    GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'accel', axis: 'x'),
-                    GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'accel', axis: 'y'),
-                    GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'accel', axis: 'z'),
-                    
-                    const Padding(padding: EdgeInsets.all(5), child: Text("Gyroscope", style: TextStyle(fontWeight: FontWeight.bold))),
-                    GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'gyro', axis: 'x'),
-                    GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'gyro', axis: 'y'),
-                    GraphWidget(size: const Size(double.infinity, 100), maxPoints: 100, dataStream: _currentStream!, sensorType: 'gyro', axis: 'z'),
-                  ],
-                ),
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final state = _controller.state;
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('IMU Mobile Node (Phase 8)'),
+            backgroundColor: state.recording ? Colors.red : Colors.blueGrey,
           ),
-
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [BoxShadow(color: Colors.grey.shade300, blurRadius: 5, offset: const Offset(0, -2))],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+          body: SafeArea(
+            child: ListView(
+              padding: const EdgeInsets.all(12),
               children: [
-                Row(
+                _sectionCard(
+                  title: 'Setup',
                   children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _fileNameController,
-                        decoration: const InputDecoration(
-                          labelText: "File Name", 
-                          border: OutlineInputBorder(), 
-                          isDense: true, 
-                          contentPadding: EdgeInsets.all(8)
+                    _textField('Backend URL', _backendController),
+                    const SizedBox(height: 8),
+                    _textField('WS Port', _wsPortController, keyboardType: TextInputType.number),
+                    const SizedBox(height: 8),
+                    _textField('Device ID', _deviceIdController),
+                    const SizedBox(height: 8),
+                    _textField('Device Role (chest/waist/thigh/other)', _deviceRoleController),
+                    const SizedBox(height: 8),
+                    _textField('Display Name', _displayNameController),
+                    const SizedBox(height: 8),
+                    _textField('Session ID aktif', _sessionIdController),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: _saveConfig,
+                            child: const Text('Save Config'),
+                          ),
                         ),
-                        enabled: !isRecording,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    SizedBox(
-                      height: 45,
-                      width: 45,
-                      child: FloatingActionButton(
-                        backgroundColor: isRecording ? Colors.red : Colors.green,
-                        child: Icon(isRecording ? Icons.stop : Icons.fiber_manual_record),
-                        onPressed: () => _toggleRecording(),
-                      ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: state.connected ? null : () => _controller.connect(),
+                            child: const Text('Connect'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: state.connected ? () => _controller.disconnect() : null,
+                            child: const Text('Disconnect'),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-                
-                const SizedBox(height: 8),
-                Row(
+                const SizedBox(height: 10),
+                _sectionCard(
+                  title: 'Runtime Status',
                   children: [
-                    Expanded(
-                      flex: 2, 
-                      child: InputDecorator(
-                        decoration: const InputDecoration(
-                          labelText: "Freq (Hz)",
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
-                        ),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<int>(
-                            value: _selectedFrequency,
-                            isExpanded: true,
-                            onChanged: (isRecording || !_useInternalSensor) ? null : (newValue) {
-                              setState(() {
-                                _selectedFrequency = newValue!;
-                                _initStream(); 
-                              });
-                            },
-                            items: _frequencyOptions.map((int value) {
-                              return DropdownMenuItem<int>(
-                                value: value,
-                                child: Text(value.toString(), style: const TextStyle(fontSize: 13)),
-                              );
-                            }).toList(),
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(width: 8),
-
-                    Expanded(
-                      flex: 2,
-                      child: InputDecorator(
-                        decoration: const InputDecoration(
-                          labelText: "Location",
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
-                        ),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<int>(
-                            value: _selectedLocation,
-                            isExpanded: true,
-                            items: _integerOptions.map((int value) {
-                              return DropdownMenuItem<int>(
-                                value: value,
-                                child: Text(value.toString(), style: const TextStyle(fontSize: 13)),
-                              );
-                            }).toList(),
-                            onChanged: (newValue) {
-                              setState(() => _selectedLocation = newValue!);
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
-                    
-                    const SizedBox(width: 8),
-
-                    Expanded(
-                      flex: 2,
-                      child: InputDecorator(
-                        decoration: const InputDecoration(
-                          labelText: "Label",
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
-                        ),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<int>(
-                            value: _selectedLabel,
-                            isExpanded: true,
-                            items: _integerOptions.map((int value) {
-                              return DropdownMenuItem<int>(
-                                value: value,
-                                child: Text(value.toString(), style: const TextStyle(fontSize: 13)),
-                              );
-                            }).toList(),
-                            onChanged: (newValue) {
-                              setState(() => _selectedLabel = newValue!);
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
+                    _statusRow('Connection', state.connected ? 'online' : 'offline'),
+                    _statusRow('Recording', state.recording ? 'running' : 'stopped'),
+                    _statusRow('Current Session', state.sessionId.isEmpty ? '-' : state.sessionId),
+                    _statusRow('Last Seq', state.lastSeq.toString()),
+                    _statusRow('Local Samples', state.localSamples.toString()),
+                    _statusRow('Pending Upload', state.pendingSamples.toString()),
+                    _statusRow('Effective Hz', state.effectiveHz.toStringAsFixed(1)),
+                    _statusRow('Battery', state.batteryPercent == null ? '-' : '${state.batteryPercent}%'),
+                    _statusRow('Storage Free', state.storageFreeMb == null ? '-' : '${state.storageFreeMb} MB'),
+                    _statusRow('Info', state.lastInfo),
                   ],
                 ),
-                
-                Padding(
-                  padding: const EdgeInsets.only(top: 8.0),
-                  child: Text(
-                    "STATUS: $_statusMessage | REC: ${isRecording ? "ON" : "OFF"}",
-                    style: TextStyle(
-                      fontSize: 11, 
-                      fontWeight: FontWeight.bold, 
-                      color: isRecording ? Colors.red : Colors.grey
-                    ),
-                  ),
+                const SizedBox(height: 10),
+                _sectionCard(
+                  title: 'Operational Notes',
+                  children: const [
+                    Text('1. Isi Session ID yang valid (format backend) sebelum connect.'),
+                    SizedBox(height: 4),
+                    Text('2. Saat backend kirim START_SESSION, app otomatis sampling 100 Hz, simpan lokal, dan upload batch protobuf.'),
+                    SizedBox(height: 4),
+                    Text('3. Jika network putus, sample tetap disimpan lokal dan dikirim ulang saat reconnect.'),
+                  ],
                 ),
               ],
             ),
           ),
-        ],
+        );
+      },
+    );
+  }
+
+  Widget _sectionCard({required String title, required List<Widget> children}) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            ...children,
+          ],
+        ),
       ),
     );
   }
 
-  Future<void> _toggleRecording() async {
-    if (CsvLogger().isRecording) {
-      await CsvLogger().stopRecording();
-      setState(() => _statusMessage = "File Saved.");
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Data saved successfully!")));
-    } else {
-      CsvLogger().currentLocation = _selectedLocation;
-      CsvLogger().currentLabel = _selectedLabel;
-      
-      String path = await CsvLogger().startRecording(_fileNameController.text);
-      setState(() => _statusMessage = "Rec $_selectedFrequency Hz...");
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Saving to $path")));
-    }
+  Widget _textField(String label, TextEditingController controller, {TextInputType? keyboardType}) {
+    return TextField(
+      controller: controller,
+      keyboardType: keyboardType,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+        isDense: true,
+      ),
+    );
+  }
+
+  Widget _statusRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Expanded(flex: 2, child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600))),
+          Expanded(flex: 3, child: Text(value)),
+        ],
+      ),
+    );
   }
 }
