@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.models import VideoRecording
+from app.db.session import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ class RecordingState:
     dropped_frame_estimate: int = 0
     failed: bool = False
     error_message: str | None = None
+    failure_notified: bool = False
 
 
 class VideoRecorderService:
@@ -125,6 +127,8 @@ class VideoRecorderService:
                     state = self._start_ffmpeg_recording(session_id, video_id, camera_id, file_path, sidecar_path)
                     self._upsert_video_record(db, state, status="RECORDING")
                     self._active[session_id] = state
+                    if state.thread is not None:
+                        state.thread.start()
                     return self._status_payload(state, status="recording")
                 except Exception as ff_exc:
                     logger.exception("FFmpeg fallback failed for session %s", session_id)
@@ -150,7 +154,9 @@ class VideoRecorderService:
             self._stop_active_state(state, join_timeout=5.0)
 
             ended_at = datetime.now(UTC).replace(tzinfo=None)
-            duration_ms = int((time.monotonic() - state.started_monotonic) * 1000)
+            start_monotonic_ms = int(state.started_monotonic * 1000)
+            end_monotonic_ms = int(time.monotonic() * 1000)
+            duration_ms = max(0, end_monotonic_ms - start_monotonic_ms)
             sidecar = {
                 "session_id": session_id,
                 "camera_id": state.camera_id,
@@ -159,7 +165,9 @@ class VideoRecorderService:
                 "height": state.height,
                 "codec": state.codec,
                 "video_start_server_time": state.started_at.isoformat(),
+                "video_start_monotonic_ms": start_monotonic_ms,
                 "video_end_server_time": ended_at.isoformat(),
+                "video_end_monotonic_ms": end_monotonic_ms,
                 "duration_ms": duration_ms,
                 "frame_count": state.frame_count,
                 "dropped_frame_estimate": state.dropped_frame_estimate,
@@ -174,6 +182,8 @@ class VideoRecorderService:
             if record:
                 record.status = "FAILED" if state.failed else "COMPLETED"
                 record.video_end_server_time = ended_at
+                record.video_start_monotonic_ms = start_monotonic_ms
+                record.video_end_monotonic_ms = end_monotonic_ms
                 record.duration_ms = duration_ms
                 record.frame_count = state.frame_count
                 record.dropped_frame_estimate = state.dropped_frame_estimate
@@ -199,14 +209,14 @@ class VideoRecorderService:
 
     def close_all(self) -> None:
         with self._lock:
-            states = list(self._active.values())
-            self._active.clear()
+            active_session_ids = list(self._active.keys())
 
-        for state in states:
+        for session_id in active_session_ids:
             try:
-                self._stop_active_state(state, join_timeout=2.0)
+                with SessionLocal() as db:
+                    self.stop_session_recording(db, session_id, suppress_errors=True)
             except Exception:
-                logger.exception("Failed during close_all for session %s", state.session_id)
+                logger.exception("Failed during close_all for session %s", session_id)
 
     def get_runtime_status(self, db: Session, session_id: str) -> dict[str, Any]:
         with self._lock:
@@ -248,6 +258,92 @@ class VideoRecorderService:
             "dropped_frame_estimate": existing.dropped_frame_estimate or 0,
             "backend": "unknown",
         }
+
+    def anonymize_session_video(self, session_id: str) -> dict[str, Any]:
+        settings = self._settings
+        source_path, sidecar_path = self._resolve_video_paths(session_id)
+        output_path = source_path.with_name(f"{session_id}_webcam_anon.mp4")
+        metadata_path = source_path.with_name(f"{session_id}_webcam_anon.json")
+
+        self._validate_anonymize_preconditions(settings, source_path)
+        command = self._build_deface_command(settings, source_path, output_path)
+        completed = subprocess.run(command, check=False, capture_output=True, text=True)
+        if completed.returncode != 0:
+            stderr = (completed.stderr or "").strip()
+            stdout = (completed.stdout or "").strip()
+            detail = stderr or stdout or "unknown deface error"
+            raise RuntimeError(f"deface failed: {detail}")
+
+        if not output_path.exists():
+            raise RuntimeError(f"deface completed but output not found: {output_path}")
+
+        frame_count = 0
+        faces_blurred = 0
+
+        report = {
+            "session_id": session_id,
+            "status": "completed",
+            "source_file_path": str(source_path),
+            "output_file_path": str(output_path),
+            "metadata_file_path": str(metadata_path),
+            "frame_count": frame_count,
+            "faces_blurred": faces_blurred,
+            "created_at": datetime.now(UTC).replace(tzinfo=None).isoformat(),
+        }
+        metadata_path.write_text(json.dumps(report, ensure_ascii=True, indent=2), encoding="utf-8")
+
+        if sidecar_path.exists():
+            self._update_anonymized_sidecar(session_id, sidecar_path, output_path, metadata_path, faces_blurred)
+
+        return report
+
+    @staticmethod
+    def _validate_anonymize_preconditions(settings: Any, source_path: Path) -> None:
+        if not settings.video_deface_enabled:
+            raise RuntimeError("video deface is disabled")
+        if not source_path.exists():
+            raise FileNotFoundError(f"source video not found: {source_path}")
+
+    @staticmethod
+    def _build_deface_command(settings: Any, source_path: Path, output_path: Path) -> list[str]:
+        command = [
+            settings.video_deface_executable,
+            str(source_path),
+            "--output",
+            str(output_path),
+            "--replacewith",
+            settings.video_deface_replacewith,
+            "--disable-progress-output",
+        ]
+        if settings.video_deface_keep_audio:
+            command.append("--keep-audio")
+        if settings.video_deface_backend and settings.video_deface_backend != "auto":
+            command.extend(["--backend", settings.video_deface_backend])
+        return command
+
+    @staticmethod
+    def _update_anonymized_sidecar(
+        session_id: str,
+        sidecar_path: Path,
+        output_path: Path,
+        metadata_path: Path,
+        faces_blurred: int,
+    ) -> None:
+        try:
+            sidecar_payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            sidecar_payload["anonymized_file_path"] = str(output_path)
+            sidecar_payload["anonymized_metadata_path"] = str(metadata_path)
+            sidecar_payload["anonymized_faces_blurred"] = faces_blurred
+            sidecar_path.write_text(json.dumps(sidecar_payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        except Exception:
+            logger.exception("Failed updating sidecar with anonymized metadata for session %s", session_id)
+
+    def _resolve_video_paths(self, session_id: str) -> tuple[Path, Path]:
+        session_root = self._settings.data_root / "sessions" / session_id / "video"
+        return (
+            session_root / f"{session_id}_webcam.mp4",
+            session_root / f"{session_id}_webcam.json",
+        )
 
     def _start_opencv_recording(
         self,
@@ -357,7 +453,7 @@ class VideoRecorderService:
             file_path=file_path,
             sidecar_path=sidecar_path,
             stop_event=threading.Event(),
-            thread=None,
+            thread=threading.Thread(target=self._monitor_ffmpeg_loop, args=(session_id,), name=f"video-ffmpeg-mon-{session_id}", daemon=True),
             capture=None,
             writer=None,
             ffmpeg_process=process,
@@ -392,14 +488,61 @@ class VideoRecorderService:
             ok, frame = state.capture.read()
             if not ok:
                 state.dropped_frame_estimate += 1
-                state.failed = True
-                state.error_message = "failed to read frame"
+                self._mark_recording_failed(state, "failed to read frame")
                 time.sleep(0.02)
                 continue
 
             state.writer.write(frame)
             state.frame_count += 1
             time.sleep(frame_interval)
+
+    def _monitor_ffmpeg_loop(self, session_id: str) -> None:
+        with self._lock:
+            state = self._active.get(session_id)
+        if state is None:
+            return
+
+        while not state.stop_event.is_set():
+            process = state.ffmpeg_process
+            if process is None:
+                return
+            code = process.poll()
+            if code is None:
+                time.sleep(0.2)
+                continue
+
+            self._mark_recording_failed(state, f"ffmpeg exited unexpectedly with code {code}")
+            return
+
+    @staticmethod
+    def _mark_recording_failed(state: RecordingState, reason: str) -> None:
+        state.failed = True
+        state.error_message = reason
+        if state.failure_notified:
+            return
+        state.failure_notified = True
+
+        try:
+            from app.services.ws_runtime import ws_runtime
+
+            ws_runtime.publish_session_event_sync(
+                state.session_id,
+                {
+                    "type": "VIDEO_RECORDER_STATUS",
+                    "session_id": state.session_id,
+                    "status": "failed",
+                    "backend": state.backend,
+                    "error": reason,
+                    "dropped_frame_estimate": state.dropped_frame_estimate,
+                },
+            )
+            ws_runtime.publish_warning_sync(
+                state.session_id,
+                device_id="webcam",
+                warning=f"video recorder failed: {reason}",
+            )
+        except Exception:
+            logger.exception("Failed pushing recorder failure event for session %s", state.session_id)
 
     @staticmethod
     def _db_status_payload(db: Session, session_id: str) -> dict[str, Any]:
@@ -431,10 +574,13 @@ class VideoRecorderService:
 
         if state.backend == "ffmpeg" and state.ffmpeg_process is not None:
             self._stop_ffmpeg_process(state.ffmpeg_process)
+            if state.thread is not None:
+                state.thread.join(timeout=join_timeout)
 
     @staticmethod
     def _upsert_video_record(db: Session, state: RecordingState, status: str) -> None:
         record = db.get(VideoRecording, state.video_id)
+        start_monotonic_ms = int(state.started_monotonic * 1000)
         if not record:
             record = VideoRecording(
                 video_id=state.video_id,
@@ -443,6 +589,7 @@ class VideoRecorderService:
                 file_path=str(state.file_path),
                 status=status,
                 video_start_server_time=state.started_at,
+                video_start_monotonic_ms=start_monotonic_ms,
             )
             db.add(record)
         else:
@@ -450,6 +597,7 @@ class VideoRecorderService:
             record.file_path = str(state.file_path)
             record.status = status
             record.video_start_server_time = state.started_at
+            record.video_start_monotonic_ms = start_monotonic_ms
         db.commit()
 
     @staticmethod
@@ -471,7 +619,9 @@ class VideoRecorderService:
                 file_path=str(file_path),
                 status="FAILED",
                 video_start_server_time=started_at,
+                video_start_monotonic_ms=int(time.monotonic() * 1000),
                 video_end_server_time=started_at,
+                video_end_monotonic_ms=int(time.monotonic() * 1000),
                 duration_ms=0,
                 frame_count=0,
                 dropped_frame_estimate=0,
@@ -480,6 +630,7 @@ class VideoRecorderService:
         else:
             record.status = "FAILED"
             record.video_end_server_time = started_at
+            record.video_end_monotonic_ms = int(time.monotonic() * 1000)
         db.commit()
 
     @staticmethod
