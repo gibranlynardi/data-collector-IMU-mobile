@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Device, Session as SessionModel, SessionDevice
 from app.db.session import SessionLocal
+from generated.control_pb2 import ControlCommand, ControlCommandType
 from generated.sensor_sample_pb2 import SensorBatch
 from app.services.ingest_pipeline import IngestProtocolError, ingest_ws_binary_batch
 from app.services.ws_runtime import ws_runtime
@@ -15,6 +16,7 @@ from app.services.ws_runtime import ws_runtime
 router = APIRouter(tags=["ws"])
 DEVICE_ID_PATTERN = r"^DEVICE-(CHEST|WAIST|THIGH|OTHER)-\d{3}$"
 SESSION_ID_PATTERN = r"^\d{8}_\d{6}_[A-F0-9]{8}$"
+HANDSHAKE_ALLOWED_SESSION_STATES = {"CREATED", "RUNNING"}
 
 
 def _match_pattern(value: str, pattern: str) -> bool:
@@ -94,25 +96,11 @@ async def _perform_handshake(websocket: WebSocket, device_id: str, db: Session) 
         await _send_ws_error(websocket, code="SESSION_NOT_FOUND", detail="session tidak ditemukan")
         await websocket.close(code=1008)
         return None
-    if session.status != "RUNNING":
+    if session.status not in HANDSHAKE_ALLOWED_SESSION_STATES:
         await _send_ws_error(
             websocket,
-            code="SESSION_NOT_RUNNING",
-            detail=f"session status {session.status} tidak menerima ingest (hanya RUNNING)",
-        )
-        await websocket.close(code=1008)
-        return None
-
-    mapped = (
-        db.query(SessionDevice)
-        .filter(SessionDevice.session_id == bound_session_id, SessionDevice.device_id == device_id)
-        .first()
-    )
-    if not mapped:
-        await _send_ws_error(
-            websocket,
-            code="DEVICE_NOT_IN_SESSION",
-            detail="device tidak tergabung pada session ini",
+            code="SESSION_NOT_CONNECTABLE",
+            detail=f"session status {session.status} tidak menerima koneksi device",
         )
         await websocket.close(code=1008)
         return None
@@ -205,6 +193,43 @@ async def _ack_batch_with_ingest(
     context: DeviceConnectionContext,
     payload: bytes,
 ) -> None:
+    ingest_allowed_states = {"RUNNING", "SYNCING"}
+    with SessionLocal() as db:
+        session = db.get(SessionModel, context.session_id)
+        if not session:
+            await _send_ws_error(websocket, code="SESSION_NOT_FOUND", detail="session tidak ditemukan")
+            return
+        if session.status not in ingest_allowed_states:
+            await _send_ws_error(
+                websocket,
+                code="SESSION_NOT_RUNNING",
+                detail=f"session status {session.status} tidak menerima ingest (hanya RUNNING/SYNCING)",
+            )
+            return
+
+        mapped = (
+            db.query(SessionDevice)
+            .filter(SessionDevice.session_id == context.session_id, SessionDevice.device_id == context.device_id)
+            .first()
+        )
+        if not mapped:
+            await _send_ws_error(
+                websocket,
+                code="DEVICE_NOT_IN_SESSION",
+                detail="device tidak tergabung pada session ini",
+            )
+            return
+
+        tracked = db.get(Device, context.device_id)
+        tracked_role = (tracked.device_role if tracked and tracked.device_role else "other").lower()
+        if tracked_role != context.role:
+            await _send_ws_error(
+                websocket,
+                code="DEVICE_ROLE_MISMATCH",
+                detail=f"device_role mismatch: request={context.role} registered={tracked_role}",
+            )
+            return
+
     try:
         ingest_ack = ingest_ws_binary_batch(
             payload,
@@ -247,7 +272,69 @@ async def _handle_binary_message(
     context: DeviceConnectionContext,
     payload: bytes,
 ) -> None:
+    control = ControlCommand()
+    try:
+        control.ParseFromString(payload)
+    except Exception:
+        control = ControlCommand()
+
+    if control.command != ControlCommandType.CONTROL_COMMAND_TYPE_UNSPECIFIED:
+        await _handle_control_message(websocket, context, control)
+        return
+
     await _ack_batch_with_ingest(websocket, context, payload)
+
+
+async def _handle_control_message(
+    websocket: WebSocket,
+    context: DeviceConnectionContext,
+    payload: ControlCommand,
+) -> None:
+    if payload.command == ControlCommandType.CLOCK_SYNC_PONG:
+        ping_id = str(payload.command_id or "")
+        device_unix_ns = int(payload.device_unix_ns or 0)
+        if not ping_id or device_unix_ns <= 0:
+            await _send_ws_error(websocket, code="CLOCK_SYNC_PONG_INVALID", detail="command_id/device_unix_ns wajib")
+            return
+
+        matched = await ws_runtime.register_clock_sync_pong(
+            session_id=context.session_id,
+            device_id=context.device_id,
+            ping_id=ping_id,
+            device_unix_ns=device_unix_ns,
+        )
+        if not matched:
+            await _send_ws_error(
+                websocket,
+                code="CLOCK_SYNC_PONG_STALE",
+                detail="clock sync pong tidak punya probe aktif",
+            )
+        return
+
+    if payload.command == ControlCommandType.STOP_SESSION and bool(payload.ack):
+        command_id = str(payload.command_id or "")
+        if not command_id:
+            await _send_ws_error(websocket, code="STOP_ACK_INVALID", detail="command_id wajib")
+            return
+
+        matched = await ws_runtime.register_stop_session_ack(
+            session_id=context.session_id,
+            device_id=context.device_id,
+            command_id=command_id,
+        )
+        if not matched:
+            await _send_ws_error(
+                websocket,
+                code="STOP_ACK_STALE",
+                detail="stop session ack tidak punya command aktif",
+            )
+        return
+
+    await _send_ws_error(
+        websocket,
+        code="UNKNOWN_BINARY_CONTROL",
+        detail="binary control command tidak dikenali",
+    )
 
 
 async def _handle_text_message(
@@ -275,6 +362,51 @@ async def _handle_text_message(
                 "session_id": context.session_id,
             },
         )
+        return
+
+    if msg_type == "CLOCK_SYNC_PONG":
+        ping_id = str(payload.get("ping_id", ""))
+        device_unix_ns_raw = payload.get("device_unix_ns")
+        if not ping_id:
+            await _send_ws_error(websocket, code="CLOCK_SYNC_PONG_INVALID", detail="ping_id wajib")
+            return
+        try:
+            device_unix_ns = int(device_unix_ns_raw)
+        except (TypeError, ValueError):
+            await _send_ws_error(websocket, code="CLOCK_SYNC_PONG_INVALID", detail="device_unix_ns tidak valid")
+            return
+
+        matched = await ws_runtime.register_clock_sync_pong(
+            session_id=context.session_id,
+            device_id=context.device_id,
+            ping_id=ping_id,
+            device_unix_ns=device_unix_ns,
+        )
+        if not matched:
+            await _send_ws_error(
+                websocket,
+                code="CLOCK_SYNC_PONG_STALE",
+                detail="clock sync pong tidak punya probe aktif",
+            )
+        return
+
+    if msg_type == "STOP_SESSION_ACK":
+        command_id = str(payload.get("command_id", ""))
+        if not command_id:
+            await _send_ws_error(websocket, code="STOP_ACK_INVALID", detail="command_id wajib")
+            return
+
+        matched = await ws_runtime.register_stop_session_ack(
+            session_id=context.session_id,
+            device_id=context.device_id,
+            command_id=command_id,
+        )
+        if not matched:
+            await _send_ws_error(
+                websocket,
+                code="STOP_ACK_STALE",
+                detail="stop session ack tidak punya command aktif",
+            )
         return
 
     if msg_type == "SENSOR_BATCH_DEBUG":
