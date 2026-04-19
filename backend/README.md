@@ -9,6 +9,7 @@ Backend ini adalah pondasi FastAPI untuk:
 - startup preflight checks
 - metadata persistence (SQLite untuk MVP)
 - CSV writer append-only per device (Phase 4)
+- webcam auto recording + sidecar metadata (Phase 5)
 
 ## Phase 4 CSV Writer
 
@@ -42,6 +43,41 @@ Saat branch WebSocket digabung, handler batch device cukup memanggil satu fungsi
 `app.services.ingest_pipeline.ingest_protobuf_batch_message(batch, raw_payload=payload_bytes)`
 
 Dengan ini jalur ingest REST dan WS tetap tunggal (dedup, CSV append, gap tracking, dan raw archive konsisten).
+
+## Phase 5 Webcam Recorder
+
+- Service: `app/services/video_recorder.py`.
+- Session start otomatis mencoba start recorder webcam.
+- Session stop otomatis stop recorder dan finalisasi metadata.
+- Output video:
+	- `sessions/{session_id}/video/{session_id}_webcam.mp4`
+- Sidecar metadata:
+	- `sessions/{session_id}/video/{session_id}_webcam.json`
+- Status endpoint untuk dashboard:
+	- `GET /sessions/{session_id}/video/status`
+
+Preflight webcam sekarang memeriksa:
+
+- `webcam_connected`
+- `webcam_preview_ok`
+- `webcam_fps` dan `webcam_fps_ok`
+- `webcam_storage_ok` berdasarkan `WEBCAM_MIN_FREE_BYTES`
+
+Contoh mapping di handler binary frame WS (ACK contract tetap):
+
+```python
+from app.services.ingest_pipeline import IngestProtocolError, ingest_ws_binary_batch
+
+try:
+	ack_payload = ingest_ws_binary_batch(
+		payload_bytes,
+		connection_session_id=bound_session_id,
+		connection_device_id=device_id,
+	)
+	await websocket.send_text(json.dumps(ack_payload, ensure_ascii=True))
+except IngestProtocolError as exc:
+	await websocket.send_text(json.dumps({"type": "ERROR", "code": exc.code, "detail": exc.detail}, ensure_ascii=True))
+```
 
 ## Quickstart
 
