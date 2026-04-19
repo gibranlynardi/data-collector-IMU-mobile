@@ -38,6 +38,7 @@ def _make_batch(session_id: str, device_id: str, role: str, pairs: list[tuple[in
 
 
 def test_ingest_ws_binary_batch_ack_contract_and_duplicate(tmp_path: Path, monkeypatch) -> None:
+    csv_writer_service.close_all()
     data_root = tmp_path / "data"
     data_root.mkdir(parents=True, exist_ok=True)
 
@@ -87,9 +88,11 @@ def test_ingest_ws_binary_batch_ack_contract_and_duplicate(tmp_path: Path, monke
     )
     assert ack_2["duplicate"] is True
     assert ack_2["duplicate_batches"] == 1
+    csv_writer_service.close_all()
 
 
 def test_ingest_ws_binary_batch_mismatch_error(tmp_path: Path, monkeypatch) -> None:
+    csv_writer_service.close_all()
     data_root = tmp_path / "data"
     data_root.mkdir(parents=True, exist_ok=True)
 
@@ -107,3 +110,74 @@ def test_ingest_ws_binary_batch_mismatch_error(tmp_path: Path, monkeypatch) -> N
             connection_device_id="DEVICE-CHEST-001",
         )
     assert exc.value.code == "SESSION_OR_DEVICE_MISMATCH"
+    csv_writer_service.close_all()
+
+
+def test_ingest_ws_binary_batch_rejects_seq_boundary_mismatch(tmp_path: Path, monkeypatch) -> None:
+    csv_writer_service.close_all()
+    data_root = tmp_path / "data"
+    data_root.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("DATA_ROOT", str(data_root))
+    get_settings.cache_clear()
+    csv_writer_service._settings = get_settings()
+
+    batch = _make_batch("20260419_143022_A1B2C3D4", "DEVICE-CHEST-001", "chest", pairs=[(10, 0), (11, 10)])
+    batch.start_seq = 9
+    payload = batch.SerializeToString()
+
+    with pytest.raises(IngestProtocolError) as exc:
+        ingest_ws_binary_batch(
+            payload,
+            connection_session_id="20260419_143022_A1B2C3D4",
+            connection_device_id="DEVICE-CHEST-001",
+        )
+    assert exc.value.code == "BATCH_SEQ_MISMATCH"
+    csv_writer_service.close_all()
+
+
+def test_ingest_ws_binary_batch_rejects_non_monotonic_seq(tmp_path: Path, monkeypatch) -> None:
+    csv_writer_service.close_all()
+    data_root = tmp_path / "data"
+    data_root.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("DATA_ROOT", str(data_root))
+    get_settings.cache_clear()
+    csv_writer_service._settings = get_settings()
+
+    batch = SensorBatch(session_id="20260419_143022_A1B2C3D4", device_id="DEVICE-CHEST-001", start_seq=2, end_seq=1)
+    first = batch.samples.add()
+    first.session_id = batch.session_id
+    first.device_id = batch.device_id
+    first.device_role = "chest"
+    first.seq = 2
+    first.timestamp_device_unix_ns = 1_700_000_000_000_000_001
+    first.elapsed_ms = 20
+    first.acc_x_g = 0.1
+    first.acc_y_g = 0.2
+    first.acc_z_g = 0.3
+    first.gyro_x_deg = 1.0
+    first.gyro_y_deg = 2.0
+    first.gyro_z_deg = 3.0
+    second = batch.samples.add()
+    second.session_id = batch.session_id
+    second.device_id = batch.device_id
+    second.device_role = "chest"
+    second.seq = 1
+    second.timestamp_device_unix_ns = 1_700_000_000_000_000_002
+    second.elapsed_ms = 10
+    second.acc_x_g = 0.1
+    second.acc_y_g = 0.2
+    second.acc_z_g = 0.3
+    second.gyro_x_deg = 1.0
+    second.gyro_y_deg = 2.0
+    second.gyro_z_deg = 3.0
+
+    with pytest.raises(IngestProtocolError) as exc:
+        ingest_ws_binary_batch(
+            batch.SerializeToString(),
+            connection_session_id="20260419_143022_A1B2C3D4",
+            connection_device_id="DEVICE-CHEST-001",
+        )
+    assert exc.value.code == "NON_MONOTONIC_SEQ"
+    csv_writer_service.close_all()
