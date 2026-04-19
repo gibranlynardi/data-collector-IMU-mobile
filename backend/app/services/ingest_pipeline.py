@@ -5,6 +5,7 @@ from typing import Any
 from google.protobuf.message import DecodeError
 from generated.sensor_sample_pb2 import SensorBatch
 
+from app.core.config import get_settings
 from app.services.csv_writer import csv_writer_service
 
 
@@ -59,6 +60,31 @@ def ingest_ws_binary_batch(
             code="EMPTY_BATCH",
             detail="SensorBatch.samples tidak boleh kosong",
         )
+
+    settings = get_settings()
+    if len(batch.samples) > settings.ws_max_batch_samples:
+        raise IngestProtocolError(
+            code="BATCH_LIMIT_EXCEEDED",
+            detail=f"sample_count={len(batch.samples)} melebihi limit {settings.ws_max_batch_samples}",
+        )
+
+    first_seq = int(batch.samples[0].seq)
+    last_seq = int(batch.samples[-1].seq)
+    if int(batch.start_seq) != first_seq or int(batch.end_seq) != last_seq:
+        raise IngestProtocolError(
+            code="BATCH_SEQ_MISMATCH",
+            detail="start_seq/end_seq tidak cocok dengan sample boundary",
+        )
+
+    prev_seq: int | None = None
+    for sample in batch.samples:
+        current = int(sample.seq)
+        if prev_seq is not None and current <= prev_seq:
+            raise IngestProtocolError(
+                code="NON_MONOTONIC_SEQ",
+                detail="seq sample harus berurutan naik (strictly increasing)",
+            )
+        prev_seq = current
 
     if connection_session_id is not None and batch.session_id != connection_session_id:
         raise IngestProtocolError(
