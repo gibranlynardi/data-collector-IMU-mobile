@@ -259,7 +259,7 @@ def test_ingest_rejects_ending_session_and_does_not_reopen_writer(tmp_path, monk
             json=_payload(device_id, "chest", [_sample(1)]),
         )
         assert response.status_code == 409
-        assert "hanya RUNNING" in response.json()["detail"]
+        assert "RUNNING/SYNCING" in response.json()["detail"]
 
     sensor_dir = data_root / "sessions" / session_id / "sensor"
     assert not sensor_dir.exists()
