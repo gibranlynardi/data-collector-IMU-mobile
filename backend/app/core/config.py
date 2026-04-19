@@ -43,6 +43,16 @@ class Settings(BaseSettings):
     ws_device_timeout_seconds: int = 10
     ws_dashboard_queue_size: int = 128
     ws_max_batch_samples: int = 1000
+    session_target_sampling_hz: int = 100
+    session_start_lead_ms: int = 1200
+    clock_sync_attempts: int = 5
+    clock_sync_probe_timeout_ms: int = 400
+    clock_sync_good_offset_ms: float = 30.0
+    clock_sync_warn_offset_ms: float = 75.0
+    clock_sync_good_latency_ms: float = 60.0
+    clock_sync_warn_latency_ms: float = 120.0
+    clock_sync_block_on_bad: bool = True
+    stop_command_ack_timeout_seconds: float = 2.0
 
     required_device_roles: str = Field(default="chest,waist,thigh")
 
