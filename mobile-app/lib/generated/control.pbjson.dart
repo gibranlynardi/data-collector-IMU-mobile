@@ -25,6 +25,8 @@ const ControlCommandType$json = {
     {'1': 'SYNC_CLOCK', '2': 3},
     {'1': 'SYNC_REQUIRED', '2': 4},
     {'1': 'PING', '2': 5},
+    {'1': 'ACK', '2': 6},
+    {'1': 'CLOCK_SYNC_PONG', '2': 7},
   ],
 };
 
@@ -32,7 +34,8 @@ const ControlCommandType$json = {
 final $typed_data.Uint8List controlCommandTypeDescriptor = $convert.base64Decode(
     'ChJDb250cm9sQ29tbWFuZFR5cGUSJAogQ09OVFJPTF9DT01NQU5EX1RZUEVfVU5TUEVDSUZJRU'
     'QQABIRCg1TVEFSVF9TRVNTSU9OEAESEAoMU1RPUF9TRVNTSU9OEAISDgoKU1lOQ19DTE9DSxAD'
-    'EhEKDVNZTkNfUkVRVUlSRUQQBBIICgRQSU5HEAU=');
+    'EhEKDVNZTkNfUkVRVUlSRUQQBBIICgRQSU5HEAUSBwoDQUNLEAYSEwoPQ0xPQ0tfU1lOQ19QT0'
+    '5HEAc=');
 
 @$core.Deprecated('Use controlCommandDescriptor instead')
 const ControlCommand$json = {
@@ -77,6 +80,20 @@ const ControlCommand$json = {
       '10': 'serverStartTimeUnixNs'
     },
     {'1': 'backend_last_seq', '3': 13, '4': 1, '5': 4, '10': 'backendLastSeq'},
+    {'1': 'command_id', '3': 14, '4': 1, '5': 9, '10': 'commandId'},
+    {'1': 'ack', '3': 15, '4': 1, '5': 8, '10': 'ack'},
+    {'1': 'device_unix_ns', '3': 16, '4': 1, '5': 4, '10': 'deviceUnixNs'},
+    {'1': 'batch_start_seq', '3': 17, '4': 1, '5': 4, '10': 'batchStartSeq'},
+    {'1': 'batch_end_seq', '3': 18, '4': 1, '5': 4, '10': 'batchEndSeq'},
+    {
+      '1': 'duplicate_batches',
+      '3': 19,
+      '4': 1,
+      '5': 4,
+      '10': 'duplicateBatches'
+    },
+    {'1': 'duplicate', '3': 20, '4': 1, '5': 8, '10': 'duplicate'},
+    {'1': 'detail', '3': 21, '4': 1, '5': 9, '10': 'detail'},
   ],
 };
 
@@ -89,4 +106,8 @@ final $typed_data.Uint8List controlCommandDescriptor = $convert.base64Decode(
     'aW5nX2h6GAogASgNUhB0YXJnZXRTYW1wbGluZ0h6Ei4KE3JlY29yZGluZ19zdGFydF9zZXEYCy'
     'ABKARSEXJlY29yZGluZ1N0YXJ0U2VxEjgKGXNlcnZlcl9zdGFydF90aW1lX3VuaXhfbnMYDCAB'
     'KARSFXNlcnZlclN0YXJ0VGltZVVuaXhOcxIoChBiYWNrZW5kX2xhc3Rfc2VxGA0gASgEUg5iYW'
-    'NrZW5kTGFzdFNlcQ==');
+    'NrZW5kTGFzdFNlcRIdCgpjb21tYW5kX2lkGA4gASgJUgljb21tYW5kSWQSEAoDYWNrGA8gASgI'
+    'UgNhY2sSJAoOZGV2aWNlX3VuaXhfbnMYECABKARSDGRldmljZVVuaXhOcxImCg9iYXRjaF9zdG'
+    'FydF9zZXEYESABKARSDWJhdGNoU3RhcnRTZXESIgoNYmF0Y2hfZW5kX3NlcRgSIAEoBFILYmF0'
+    'Y2hFbmRTZXESKwoRZHVwbGljYXRlX2JhdGNoZXMYEyABKARSEGR1cGxpY2F0ZUJhdGNoZXMSHA'
+    'oJZHVwbGljYXRlGBQgASgIUglkdXBsaWNhdGUSFgoGZGV0YWlsGBUgASgJUgZkZXRhaWw=');
