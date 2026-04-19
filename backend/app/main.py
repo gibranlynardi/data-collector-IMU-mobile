@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from sqlalchemy import inspect, text
 
 from app.api.routers.artifacts import router as artifacts_router
 from app.api.routers.annotations import router as annotations_router
@@ -18,9 +19,23 @@ from app.services.video_recorder import video_recorder_service
 from app.services.ws_runtime import ws_runtime
 
 
+def _ensure_video_recordings_schema() -> None:
+    inspector = inspect(engine)
+    if "video_recordings" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("video_recordings")}
+    with engine.begin() as conn:
+        if "video_start_monotonic_ms" not in columns:
+            conn.execute(text("ALTER TABLE video_recordings ADD COLUMN video_start_monotonic_ms INTEGER"))
+        if "video_end_monotonic_ms" not in columns:
+            conn.execute(text("ALTER TABLE video_recordings ADD COLUMN video_end_monotonic_ms INTEGER"))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    _ensure_video_recordings_schema()
     app.state.preflight_report = run_startup_checks()
     ws_runtime.start()
     yield
