@@ -1,0 +1,20 @@
+syntax = "proto3";
+package imu_telemetry;
+
+enum CommandType {
+  PING          = 0;
+  PONG          = 1;
+  START_SESSION = 2;
+  STOP_SESSION  = 3;
+  SET_LABEL     = 4;
+  ACK           = 5;
+  CLOCK_SYNC    = 6;
+  ERROR_ALERT   = 7;
+}
+
+message Command {
+  CommandType type         = 1;
+  string      payload      = 2;   // JSON string, schema per CommandType
+  int64       issued_at_ms = 3;   // Unix epoch ms
+  string      command_id   = 4;   // UUID for request/ACK matching
+}

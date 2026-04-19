@@ -1,0 +1,25 @@
+syntax = "proto3";
+package imu_telemetry;
+
+message SensorPacket {
+  float  acc_x            = 1;   // Unit: g
+  float  acc_y            = 2;
+  float  acc_z            = 3;
+  float  gyro_x           = 4;   // Unit: deg/s
+  float  gyro_y           = 5;
+  float  gyro_z           = 6;
+  int64  timestamp_ms     = 7;   // Unix epoch ms, clock-offset corrected
+  uint64 sequence_number  = 8;   // Monotonic per (device_id, session_id)
+  string device_id        = 9;   // Stable UUID, stored in SharedPreferences
+  uint32 schema_version   = 10;  // Current = 1
+  int64  raw_timestamp_ms = 11;  // HP clock before offset correction (audit)
+}
+
+message DeviceRegister {
+  string device_id       = 1;
+  string device_role     = 2;   // "chest" | "waist" | "thigh_left" | ...
+  string device_model    = 3;
+  string android_version = 4;
+  string app_version     = 5;
+  uint32 schema_version  = 6;
+}

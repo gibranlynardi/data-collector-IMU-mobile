@@ -1,0 +1,382 @@
+"""
+WebSocket endpoints for telemetry and control channels (CLAUDE.md §8).
+/ws/telemetry — SensorPacket binary stream (device → backend)
+/ws/control   — Command binary channel (bidirectional)
+"""
+import json
+import logging
+import time
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from master_backend.proto.sensor_packet import DeviceRegister, SensorPacket
+from master_backend.proto.commands import (
+    Command, CommandType,
+    make_ack, make_clock_sync_response, make_error_alert, make_pong,
+)
+from .audit_logger import audit
+from .dedup_store import dedup
+from .io_manager import io_manager
+from .session_manager import SessionState, session_manager
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+# Active frontend WebSocket connections (operator dashboards).
+_frontend_connections: set[WebSocket] = set()
+# Latest sensor sample per device — pushed to /ws/live at 20 fps.
+_latest_samples: dict[str, dict] = {}
+
+
+async def broadcast_to_frontends(msg: dict) -> None:
+    """Push a JSON state update to all connected operator dashboards."""
+    dead: set[WebSocket] = set()
+    text = json.dumps(msg)
+    for ws in _frontend_connections:
+        try:
+            await ws.send_text(text)
+        except Exception:
+            dead.add(ws)
+    _frontend_connections.difference_update(dead)
+
+
+# ── Telemetry channel ─────────────────────────────────────────────────────────
+
+@router.websocket("/ws/telemetry")
+async def telemetry_ws(websocket: WebSocket) -> None:
+    await websocket.accept()
+    device_id: str | None = None
+
+    try:
+        async for raw in websocket.iter_bytes():
+            try:
+                pkt = SensorPacket.from_bytes(raw)
+            except Exception as exc:
+                logger.debug("Failed to parse SensorPacket: %s", exc)
+                continue
+
+            device_id = pkt.device_id
+
+            if pkt.schema_version != 1:
+                await audit.log(
+                    "WARN",
+                    "schema_mismatch",
+                    {"expected": 1, "got": pkt.schema_version, "device_id": device_id},
+                )
+                continue
+
+            if session_manager.state != SessionState.RECORDING:
+                continue
+
+            if dedup.is_duplicate(device_id, session_manager.session_id, pkt.sequence_number):
+                continue
+
+            dedup.add(device_id, session_manager.session_id, pkt.sequence_number)
+            session_manager.increment_packets(device_id)
+            session_manager.mark_first_packet(device_id, pkt.timestamp_ms)
+            await io_manager.write_packet(pkt)
+            # Cache latest sample for /ws/live dashboard chart.
+            _latest_samples[device_id] = {
+                "acc": [round(pkt.acc_x, 4), round(pkt.acc_y, 4), round(pkt.acc_z, 4)],
+                "gyro": [round(pkt.gyro_x, 4), round(pkt.gyro_y, 4), round(pkt.gyro_z, 4)],
+                "ts": pkt.timestamp_ms,
+            }
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        await audit.log("ERROR", "telemetry_ws_error", {"error": str(exc), "device_id": device_id})
+    finally:
+        session_manager.unregister_device(device_id)
+        await audit.log("INFO", "ws_disconnect", {"channel": "telemetry", "device_id": device_id})
+
+
+# ── Control channel ───────────────────────────────────────────────────────────
+
+@router.websocket("/ws/control")
+async def control_ws(websocket: WebSocket) -> None:
+    await websocket.accept()
+    device_id: str | None = None
+
+    try:
+        # First binary message must be DeviceRegister.
+        first_raw = await websocket.receive_bytes()
+        reg = DeviceRegister.from_bytes(first_raw)
+
+        if not reg.is_valid:
+            await websocket.close(code=4001, reason="Invalid DeviceRegister")
+            return
+
+        device_id = reg.device_id
+
+        # Role uniqueness check (CLAUDE.md §22.1)
+        collision = session_manager.register_device(
+            device_id=reg.device_id,
+            role=reg.device_role,
+            model=reg.device_model,
+            app_version=reg.app_version,
+            ws=websocket,
+        )
+        if collision:
+            await audit.log("WARN", "role_collision", {"role": reg.device_role, "device_id": device_id[:8]})
+            await websocket.send_bytes(
+                make_error_alert("ROLE_COLLISION", collision)
+            )
+            await websocket.close(code=4002, reason=collision)
+            return
+
+        await audit.log(
+            "INFO",
+            "device_connected",
+            {"device_id": device_id[:8], "role": reg.device_role, "model": reg.device_model},
+        )
+        # Notify frontend immediately so device shows as online.
+        await broadcast_to_frontends(_state_snapshot())
+
+        # Subsequent messages are Commands.
+        async for raw in websocket.iter_bytes():
+            try:
+                cmd = Command.from_bytes(raw)
+            except Exception as exc:
+                logger.debug("Failed to parse Command from %s: %s", device_id[:8], exc)
+                continue
+
+            await _handle_command(cmd, device_id, websocket)
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        await audit.log("ERROR", "control_ws_error", {"error": str(exc), "device_id": device_id})
+    finally:
+        session_manager.unregister_device(device_id)
+        await audit.log("INFO", "ws_disconnect", {"channel": "control", "device_id": device_id})
+        # Notify frontend so device shows as offline immediately.
+        await broadcast_to_frontends(_state_snapshot())
+
+
+async def _handle_command(cmd: Command, device_id: str, ws: WebSocket) -> None:
+    match cmd.type:
+        case CommandType.PING:
+            session_manager.mark_ping(device_id)
+            await ws.send_bytes(make_pong(cmd.command_id))
+
+        case CommandType.CLOCK_SYNC:
+            t1_ms = int(time.time() * 1000)
+            try:
+                payload = json.loads(cmd.payload)
+                t0_ms = int(payload["t0_ms"])
+            except Exception:
+                return
+            t2_ms = int(time.time() * 1000)
+            await ws.send_bytes(
+                make_clock_sync_response(cmd.command_id, t0_ms, t1_ms, t2_ms)
+            )
+
+        case CommandType.START_SESSION:
+            try:
+                payload = json.loads(cmd.payload) if cmd.payload else {}
+            except Exception:
+                payload = {}
+            ok = await session_manager.start_recording(payload)
+            status = "ok" if ok else "fail"
+            detail = "" if ok else "Invalid state for START_SESSION"
+            await ws.send_bytes(make_ack(cmd.command_id, status, detail))
+            if ok:
+                await audit.log("INFO", "session_start", {"initiated_by": device_id[:8]})
+                # Broadcast START to all other connected devices.
+                start_cmd = Command(
+                    type=CommandType.START_SESSION,
+                    payload=json.dumps({"session_id": session_manager.session_id}),
+                    command_id=cmd.command_id,
+                ).to_bytes()
+                await session_manager.broadcast_control(start_cmd)
+
+        case CommandType.STOP_SESSION:
+            if session_manager.state != SessionState.RECORDING:
+                await ws.send_bytes(make_ack(cmd.command_id, "fail", "Not recording"))
+                return
+            try:
+                payload = json.loads(cmd.payload) if cmd.payload else {}
+                reason = payload.get("reason", "operator_stop")
+            except Exception:
+                reason = "operator_stop"
+            report = await session_manager.stop_recording(reason)
+            await ws.send_bytes(make_ack(cmd.command_id, "ok"))
+            await audit.log("INFO", "session_stop", {"reason": reason})
+
+        case CommandType.SET_LABEL:
+            try:
+                payload = json.loads(cmd.payload)
+                label_id = int(payload["label_id"])
+                label_name = str(payload.get("label_name", str(label_id)))
+            except Exception:
+                await ws.send_bytes(make_ack(cmd.command_id, "fail", "Bad SET_LABEL payload"))
+                return
+            io_manager.set_label(label_id, label_name)
+            await ws.send_bytes(make_ack(cmd.command_id, "ok"))
+            await audit.log(
+                "INFO",
+                "label_injected",
+                {"label_id": label_id, "label_name": label_name, "applied_at_ms": int(time.time() * 1000)},
+            )
+
+        case _:
+            logger.debug("Unhandled command type %s from %s", cmd.type, device_id[:8])
+
+
+# ── Frontend dashboard channel (JSON) ─────────────────────────────────────────
+
+@router.websocket("/ws/frontend")
+async def frontend_ws(websocket: WebSocket) -> None:
+    """Operator dashboard — JSON protocol, not binary proto."""
+    await websocket.accept()
+    _frontend_connections.add(websocket)
+    await audit.log("INFO", "frontend_connected", {})
+
+    # Send current state immediately.
+    await websocket.send_text(json.dumps(_state_snapshot()))
+
+    try:
+        async for text in websocket.iter_text():
+            try:
+                msg = json.loads(text)
+            except Exception:
+                continue
+            await _handle_frontend_msg(msg, websocket)
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.debug("frontend_ws error: %s", exc)
+    finally:
+        _frontend_connections.discard(websocket)
+        await audit.log("INFO", "frontend_disconnected", {})
+
+
+async def _handle_frontend_msg(msg: dict, ws: WebSocket) -> None:
+    cmd_type = msg.get("type", "")
+    command_id = msg.get("command_id", "")
+    payload = msg.get("payload", {})
+
+    match cmd_type:
+        case "START_SESSION":
+            ok, detail = await session_manager.start_recording(payload)
+            await ws.send_text(json.dumps({
+                "type": "ACK",
+                "command_id": command_id,
+                "status": "ok" if ok else "fail",
+                "detail": "" if ok else detail,
+            }))
+            if ok:
+                # Broadcast coordinated START to all mobile devices (CLAUDE.md §22.5)
+                start_cmd = Command(
+                    type=CommandType.START_SESSION,
+                    payload=json.dumps({
+                        "session_id": session_manager.session_id,
+                        "scheduled_start_ms": session_manager.scheduled_start_ms,
+                    }),
+                ).to_bytes()
+                await session_manager.broadcast_control(start_cmd)
+                await broadcast_to_frontends({
+                    "type": "STATE_UPDATE",
+                    **_state_snapshot(),
+                    "scheduled_start_ms": session_manager.scheduled_start_ms,
+                })
+
+        case "STOP_SESSION":
+            reason = payload.get("reason", "operator_stop")
+            report = await session_manager.stop_recording(reason)
+            await ws.send_text(json.dumps({
+                "type": "ACK",
+                "command_id": command_id,
+                "status": "ok",
+            }))
+            await broadcast_to_frontends({
+                "type": "STATE_UPDATE",
+                **_state_snapshot(),
+                "integrity_report": report,
+            })
+
+        case "SET_LABEL":
+            label_id = int(payload.get("label_id", 0))
+            label_name = str(payload.get("label_name", str(label_id)))
+            io_manager.set_label(label_id, label_name)
+            await audit.log("INFO", "label_injected", {
+                "label_id": label_id,
+                "label_name": label_name,
+                "applied_at_ms": int(time.time() * 1000),
+            })
+            await ws.send_text(json.dumps({
+                "type": "ACK",
+                "command_id": command_id,
+                "status": "ok",
+            }))
+
+        case "GET_STATE":
+            await ws.send_text(json.dumps(_state_snapshot()))
+
+
+def _state_snapshot() -> dict:
+    return {
+        "type": "STATE_UPDATE",
+        "state": session_manager.state,
+        "session_id": session_manager.session_id,
+        "subject": session_manager.subject_name,
+        "session_tag": session_manager.session_tag,
+        "operator": session_manager.operator,
+        # Use control_ws presence as source of truth for online status.
+        "devices": [
+            {
+                "device_id": d.device_id,
+                "role": d.device_role,
+                "is_online": d.control_ws is not None,
+                "packets": d.packets_received,
+                "substate": d.substate,
+                "first_packet_ts": d.first_packet_ts,
+                "offline_intervals": len(d.offline_intervals),
+            }
+            for d in session_manager._devices.values()
+        ],
+        "quorum": {
+            "connected": len(session_manager.online_devices),
+            "roles": session_manager.connected_roles,
+        },
+    }
+
+
+# ── Live sensor data stream for dashboard chart (JSON, 20 fps) ───────────────
+
+_live_connections: set[WebSocket] = set()
+
+
+@router.websocket("/ws/live")
+async def live_ws(websocket: WebSocket) -> None:
+    """Push latest sensor samples to frontend chart at ~20 fps."""
+    await websocket.accept()
+    _live_connections.add(websocket)
+    try:
+        # Keep open until client disconnects.
+        await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        _live_connections.discard(websocket)
+
+
+async def _live_broadcaster_loop() -> None:
+    """Background task started from main.py lifespan."""
+    while True:
+        await asyncio.sleep(0.05)  # 20 fps
+        if _latest_samples and _live_connections:
+            msg = json.dumps({"samples": _latest_samples})
+            dead: set[WebSocket] = set()
+            for ws in _live_connections:
+                try:
+                    await ws.send_text(msg)
+                except Exception:
+                    dead.add(ws)
+            _live_connections.difference_update(dead)
+
+
+import asyncio  # noqa: E402 (needed for _live_broadcaster_loop)

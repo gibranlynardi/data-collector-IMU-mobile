@@ -247,6 +247,42 @@ DerivedData/
 ## Custom
 # Google API key and other resources
 GoogleService-Info.plist
+
+# Claude Code — session files, architecture docs, planning docs
+.claude/
+memory.md
+system_mermaid.txt
+CLAUDE.md
+MIGRATION_PLAN.md
+
+# Recorded research data (never commit — stays on SSD only)
+data/
+data_rescue/
+Data_Riset_IMU/
+*.csv
+*.webm
+upload_report_*.log
+master_backend/.sessions/
+
+# SSH credentials (FAMS uploader)
+master_backend/*.pem
+master_backend/*.key
+master_backend/known_hosts
+
+# Python backend
+**/__pycache__/
+*.pyc
+*.pyo
+master_backend/.venv/
+master_backend/*.egg-info/
+master_backend/proto/*_pb2.py
+master_backend/proto/*_pb2_grpc.py
+master_backend/.env
+
+# Frontend
+master_frontend/node_modules/
+master_frontend/.next/
+master_frontend/.env.local
 google-services.json
 # Plugins (already resolved through pubspec.yaml)
 .flutter-plugins
