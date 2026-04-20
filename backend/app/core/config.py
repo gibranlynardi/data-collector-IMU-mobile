@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     storage_runtime_warning_free_bytes: int = 2_000_000_000
     storage_runtime_critical_free_bytes: int = 1_000_000_000
     storage_runtime_auto_safe_stop_on_critical: bool = True
+    session_finalize_min_samples_per_required_device: int = 100
+    session_finalize_max_missing_gap_size: int = 50
+    session_finalize_require_video: bool = True
 
     required_device_roles: str = Field(default="chest,waist,thigh")
 
