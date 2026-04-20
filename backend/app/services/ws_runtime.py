@@ -20,7 +20,9 @@ PROTO_SCHEMA_VERSION = "1.1.0"
 
 @dataclass
 class DeviceStreamState:
+    connection_count: int = 0
     last_received_seq: int = 0
+    first_seen_monotonic: float = field(default_factory=time.monotonic)
     last_heartbeat_monotonic: float = field(default_factory=time.monotonic)
     last_seen_unix_ns: int = field(default_factory=time.time_ns)
     received_batches: int = 0
@@ -130,6 +132,7 @@ class WsRuntime:
             self._device_connections[device_id] = websocket
             self._device_session_map[device_id] = session_id
             state = self._device_states.setdefault((session_id, device_id), DeviceStreamState())
+            state.connection_count += 1
             state.last_heartbeat_monotonic = time.monotonic()
             state.last_seen_unix_ns = time.time_ns()
 
@@ -683,6 +686,7 @@ class WsRuntime:
                         "received_batches": state.received_batches,
                         "duplicate_batches": state.duplicate_batches,
                         "total_samples": state.total_samples,
+                        "reconnect_count": max(0, state.connection_count - 1),
                         "last_seen_unix_ns": int(state.last_seen_unix_ns),
                     }
                 )
@@ -692,6 +696,27 @@ class WsRuntime:
             "session_id": session_id,
             "devices": sorted(devices, key=lambda item: item["device_id"]),
         }
+
+    async def collect_runtime_metrics(self) -> dict[str, dict[str, Any]]:
+        now = time.monotonic()
+        metrics: dict[str, dict[str, Any]] = {}
+        async with self._lock:
+            for (session_id, device_id), state in self._device_states.items():
+                key = f"{session_id}:{device_id}"
+                elapsed = max(0.001, now - state.first_seen_monotonic)
+                metrics[key] = {
+                    "session_id": session_id,
+                    "device_id": device_id,
+                    "last_received_seq": state.last_received_seq,
+                    "received_batches": state.received_batches,
+                    "duplicate_batches": state.duplicate_batches,
+                    "total_samples": state.total_samples,
+                    "samples_per_sec": round(state.total_samples / elapsed, 3),
+                    "reconnect_count": max(0, state.connection_count - 1),
+                    "upload_retry_count": state.duplicate_batches,
+                    "last_seen_unix_ns": int(state.last_seen_unix_ns),
+                }
+        return metrics
 
     async def _dashboard_sender(self, websocket: WebSocket, queue: asyncio.Queue[dict[str, Any]]) -> None:
         while True:
