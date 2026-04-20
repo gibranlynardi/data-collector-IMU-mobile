@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Depends, HTTPException, Path
 from sqlalchemy.orm import Session
 
+from app.core.auth import AccessIdentity, require_device_access
 from app.core.config import get_settings
 from app.db.models import Device, Session as SessionModel, SessionDevice
 from app.db.session import get_db
@@ -113,6 +114,7 @@ def ingest_sensor_batch(
     device_role: Annotated[str, Body(embed=True)],
     samples: Annotated[list[dict], Body(embed=True)],
     db: DBSession,
+    _identity: Annotated[AccessIdentity, Depends(require_device_access)],
 ) -> dict:
     settings = get_settings()
     normalized_role = device_role.lower()
