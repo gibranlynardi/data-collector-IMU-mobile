@@ -29,6 +29,7 @@ from app.services.artifacts import ensure_session_layout, finalize_session_artif
 from app.services.clock_sync import clock_sync_service
 from app.services.csv_writer import csv_writer_service
 from app.services.preflight import is_preflight_passed, store_preflight_report
+from app.services.session_finalization import evaluate_session_completeness, write_completeness_report
 from app.services.annotation_audit import write_annotation_audit
 from app.services.video_recorder import video_recorder_service
 from app.services.ws_runtime import ws_runtime
@@ -621,6 +622,18 @@ async def stop_session(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTER
                     **missing_summary,
                 },
             )
+            completeness = evaluate_session_completeness(db, session_id)
+            write_completeness_report(session_id, completeness)
+            await ws_runtime.publish_session_event(
+                session_id,
+                {
+                    "type": "SESSION_COMPLETENESS",
+                    "session_id": session_id,
+                    "complete": completeness.complete,
+                    "checks": completeness.checks,
+                    "detail": completeness.detail,
+                },
+            )
             clock_sync_service.clear_session(session_id)
     else:
         raise HTTPException(status_code=409, detail=f"invalid transition {session.status} -> ENDING")
@@ -728,8 +741,31 @@ async def finalize_session(
     db: DBSession,
 ) -> SessionResponse:
     await ws_runtime.stop_session_countdown(session_id)
+    if payload.incomplete and not (payload.reason or "").strip():
+        raise HTTPException(status_code=400, detail="reason wajib diisi untuk finalize incomplete")
+
+    if not payload.incomplete:
+        completeness = evaluate_session_completeness(db, session_id)
+        write_completeness_report(session_id, completeness)
+        if not completeness.complete:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "session belum lengkap, gunakan finalize incomplete dengan reason",
+                    "completeness": {
+                        "complete": completeness.complete,
+                        "checks": completeness.checks,
+                        "detail": completeness.detail,
+                    },
+                },
+            )
+
     try:
         session = session_manager.finalize_session(db, session_id, incomplete=payload.incomplete)
+        if payload.incomplete:
+            session.override_reason = (payload.reason or "").strip()
+            db.commit()
+            db.refresh(session)
         missing_summary = _update_missing_sample_sync_report(session_id)
         finalize_session_artifacts(db, session_id)
     except ValueError as exc:
