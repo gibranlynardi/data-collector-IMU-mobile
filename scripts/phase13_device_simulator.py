@@ -23,12 +23,12 @@ if str(BACKEND_ROOT) not in sys.path:
 from generated.sensor_sample_pb2 import SensorBatch, SensorSample  # noqa: E402
 
 
-def _http_json(method: str, url: str, payload: dict | None = None) -> dict:
+def _http_json(method: str, url: str, payload: dict | None = None, headers: dict[str, str] | None = None) -> dict:
     data = None
-    headers = {"Content-Type": "application/json"}
+    request_headers = {"Content-Type": "application/json", **(headers or {})}
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=True).encode("utf-8")
-    request = urllib.request.Request(url=url, method=method.upper(), data=data, headers=headers)
+    request = urllib.request.Request(url=url, method=method.upper(), data=data, headers=request_headers)
     with urllib.request.urlopen(request, timeout=15) as response:
         raw = response.read().decode("utf-8")
     return json.loads(raw) if raw else {}
@@ -42,6 +42,7 @@ class SimDevice:
     session_id: str
     hz: int
     duration_seconds: int
+    enrollment_token: str = ""
     disconnect_at_seconds: int | None = None
     reconnect_delay_seconds: int = 3
 
@@ -66,6 +67,7 @@ class SimDevice:
                                 "device_role": self.device_role,
                                 "session_id": self.session_id,
                                 "local_last_seq": local_last_seq,
+                                "enrollment_token": self.enrollment_token,
                             },
                             ensure_ascii=True,
                         )
@@ -130,7 +132,7 @@ class SimDevice:
                 await asyncio.sleep(1)
 
 
-def _register_devices(rest_base: str) -> None:
+def _register_devices(rest_base: str, *, enrollment_token: str) -> None:
     devices = [
         ("DEVICE-CHEST-001", "chest"),
         ("DEVICE-WAIST-001", "waist"),
@@ -146,10 +148,15 @@ def _register_devices(rest_base: str) -> None:
                 "display_name": f"Simulator {role}",
                 "ip_address": "127.0.0.1",
             },
+            headers={
+                "X-Device-Enrollment-Token": enrollment_token,
+                "X-Device-Id": device_id,
+            } if enrollment_token else {},
         )
 
 
-def _setup_session(rest_base: str, session_id: str | None) -> str:
+def _setup_session(rest_base: str, session_id: str | None, *, operator_token: str, operator_id: str) -> str:
+    operator_headers = {"X-Operator-Token": operator_token, "X-Operator-Id": operator_id} if operator_token else {}
     if session_id:
         sid = session_id
     else:
@@ -159,6 +166,7 @@ def _setup_session(rest_base: str, session_id: str | None) -> str:
             {
                 "override_reason": "phase13 simulator run",
             },
+            headers=operator_headers,
         )
         sid = str(created["session_id"])
 
@@ -173,21 +181,30 @@ def _setup_session(rest_base: str, session_id: str | None) -> str:
             ],
             "replace": True,
         },
+        headers=operator_headers,
     )
     return sid
 
 
-def _start_session(rest_base: str, session_id: str) -> None:
+def _start_session(rest_base: str, session_id: str, *, operator_token: str, operator_id: str) -> None:
     try:
-        _http_json("POST", f"{rest_base}/sessions/{session_id}/start")
+        _http_json(
+            "POST",
+            f"{rest_base}/sessions/{session_id}/start",
+            headers={"X-Operator-Token": operator_token, "X-Operator-Id": operator_id} if operator_token else {},
+        )
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="ignore")
         print(f"start session failed (continuing): HTTP {exc.code} {body}")
 
 
-def _stop_session(rest_base: str, session_id: str) -> None:
+def _stop_session(rest_base: str, session_id: str, *, operator_token: str, operator_id: str) -> None:
     try:
-        _http_json("POST", f"{rest_base}/sessions/{session_id}/stop")
+        _http_json(
+            "POST",
+            f"{rest_base}/sessions/{session_id}/stop",
+            headers={"X-Operator-Token": operator_token, "X-Operator-Id": operator_id} if operator_token else {},
+        )
     except Exception as exc:
         print(f"stop session warning: {exc}")
 
@@ -195,8 +212,11 @@ def _stop_session(rest_base: str, session_id: str) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Phase 13 device simulator (3 devices, 100Hz, disconnect/reconnect)")
     parser.add_argument("--rest-base", default="http://127.0.0.1:8000", help="Backend REST base URL")
-    parser.add_argument("--ws-base", default="ws://127.0.0.1:8001", help="Backend WS base URL")
+    parser.add_argument("--ws-base", default="ws://127.0.0.1:8000", help="Backend WS base URL")
     parser.add_argument("--session-id", default="", help="Existing session_id to use; empty means create new")
+    parser.add_argument("--operator-token", default="", help="Operator API token")
+    parser.add_argument("--operator-id", default="simulator", help="Operator ID for audit")
+    parser.add_argument("--device-enrollment-token", default="", help="Device enrollment token")
     parser.add_argument("--hz", type=int, default=100, help="Sampling frequency per device")
     parser.add_argument("--duration-seconds", type=int, default=20, help="Simulation duration")
     parser.add_argument("--skip-start", action="store_true", help="Skip calling start session")
@@ -205,16 +225,21 @@ def parse_args() -> argparse.Namespace:
 
 
 async def main_async(args: argparse.Namespace) -> int:
-    _register_devices(args.rest_base)
-    session_id = _setup_session(args.rest_base, args.session_id or None)
+    _register_devices(args.rest_base, enrollment_token=args.device_enrollment_token)
+    session_id = _setup_session(
+        args.rest_base,
+        args.session_id or None,
+        operator_token=args.operator_token,
+        operator_id=args.operator_id,
+    )
     if not args.skip_start:
-        _start_session(args.rest_base, session_id)
+        _start_session(args.rest_base, session_id, operator_token=args.operator_token, operator_id=args.operator_id)
 
     print(f"Running simulator for session {session_id}")
 
     devices = [
-        SimDevice("DEVICE-CHEST-001", "chest", args.ws_base, session_id, args.hz, args.duration_seconds),
-        SimDevice("DEVICE-WAIST-001", "waist", args.ws_base, session_id, args.hz, args.duration_seconds),
+        SimDevice("DEVICE-CHEST-001", "chest", args.ws_base, session_id, args.hz, args.duration_seconds, enrollment_token=args.device_enrollment_token),
+        SimDevice("DEVICE-WAIST-001", "waist", args.ws_base, session_id, args.hz, args.duration_seconds, enrollment_token=args.device_enrollment_token),
         SimDevice(
             "DEVICE-THIGH-001",
             "thigh",
@@ -222,6 +247,7 @@ async def main_async(args: argparse.Namespace) -> int:
             session_id,
             args.hz,
             args.duration_seconds,
+            enrollment_token=args.device_enrollment_token,
             disconnect_at_seconds=max(3, args.duration_seconds // 3),
             reconnect_delay_seconds=3,
         ),
@@ -230,7 +256,7 @@ async def main_async(args: argparse.Namespace) -> int:
     await asyncio.gather(*(device.run() for device in devices))
 
     if not args.skip_stop:
-        _stop_session(args.rest_base, session_id)
+        _stop_session(args.rest_base, session_id, operator_token=args.operator_token, operator_id=args.operator_id)
 
     print("Phase 13 simulation completed")
     return 0
