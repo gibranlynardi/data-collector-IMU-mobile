@@ -17,6 +17,7 @@ import 'node_config_store.dart';
 import 'sensor_sampler.dart';
 import 'socket_client.dart';
 import 'storage_info_service.dart';
+import 'runtime_guard_service.dart';
 
 class DeviceNodeState {
   const DeviceNodeState({
@@ -30,6 +31,10 @@ class DeviceNodeState {
     required this.batteryPercent,
     required this.storageFreeMb,
     required this.lastSeq,
+    required this.intervalP99Ms,
+    required this.jitterP99Ms,
+    required this.foregroundGuardActive,
+    required this.batteryOptimizationIgnored,
   });
 
   final bool connected;
@@ -42,6 +47,10 @@ class DeviceNodeState {
   final int? batteryPercent;
   final int? storageFreeMb;
   final int lastSeq;
+  final double intervalP99Ms;
+  final double jitterP99Ms;
+  final bool foregroundGuardActive;
+  final bool batteryOptimizationIgnored;
 
   DeviceNodeState copyWith({
     bool? connected,
@@ -54,6 +63,10 @@ class DeviceNodeState {
     int? batteryPercent,
     int? storageFreeMb,
     int? lastSeq,
+    double? intervalP99Ms,
+    double? jitterP99Ms,
+    bool? foregroundGuardActive,
+    bool? batteryOptimizationIgnored,
   }) {
     return DeviceNodeState(
       connected: connected ?? this.connected,
@@ -66,6 +79,10 @@ class DeviceNodeState {
       batteryPercent: batteryPercent ?? this.batteryPercent,
       storageFreeMb: storageFreeMb ?? this.storageFreeMb,
       lastSeq: lastSeq ?? this.lastSeq,
+      intervalP99Ms: intervalP99Ms ?? this.intervalP99Ms,
+      jitterP99Ms: jitterP99Ms ?? this.jitterP99Ms,
+      foregroundGuardActive: foregroundGuardActive ?? this.foregroundGuardActive,
+      batteryOptimizationIgnored: batteryOptimizationIgnored ?? this.batteryOptimizationIgnored,
     );
   }
 
@@ -81,6 +98,10 @@ class DeviceNodeState {
       batteryPercent: null,
       storageFreeMb: null,
       lastSeq: 0,
+      intervalP99Ms: 0,
+      jitterP99Ms: 0,
+      foregroundGuardActive: false,
+      batteryOptimizationIgnored: true,
     );
   }
 }
@@ -95,6 +116,7 @@ class DeviceNodeController extends ChangeNotifier {
     Stream<List<ConnectivityResult>> Function()? connectivityChanges,
     Future<int> Function()? batteryLevelProvider,
     Future<int?> Function()? storageFreeProvider,
+    RuntimeGuardPort? runtimeGuard,
     Duration reconnectDelay = const Duration(seconds: 3),
     Duration heartbeatInterval = const Duration(seconds: 2),
     Duration uploaderInterval = const Duration(milliseconds: 500),
@@ -107,6 +129,7 @@ class DeviceNodeController extends ChangeNotifier {
         _connectivityChanges = connectivityChanges ?? (() => Connectivity().onConnectivityChanged),
         _batteryLevelProvider = batteryLevelProvider ?? (() => Battery().batteryLevel),
         _storageFreeProvider = storageFreeProvider ?? (() => StorageInfoService().getFreeStorageMb()),
+        _runtimeGuard = runtimeGuard ?? RuntimeGuardService(),
         _reconnectDelay = reconnectDelay,
         _heartbeatInterval = heartbeatInterval,
         _uploaderInterval = uploaderInterval,
@@ -120,6 +143,7 @@ class DeviceNodeController extends ChangeNotifier {
   final Stream<List<ConnectivityResult>> Function() _connectivityChanges;
   final Future<int> Function() _batteryLevelProvider;
   final Future<int?> Function() _storageFreeProvider;
+  final RuntimeGuardPort _runtimeGuard;
   final Duration _reconnectDelay;
   final Duration _heartbeatInterval;
   final Duration _uploaderInterval;
@@ -145,6 +169,9 @@ class DeviceNodeController extends ChangeNotifier {
   int _sampleWindowCount = 0;
   final Stopwatch _sampleWindow = Stopwatch()..start();
   final Stopwatch _appMonotonic = Stopwatch()..start();
+  final List<double> _intervalWindowMs = <double>[];
+  int _targetSamplingHz = 100;
+  int? _lastSampleTimestampNs;
   String? _pendingStopCommandId;
   String? _pendingStopSessionId;
   bool _drainingBeforeStopAck = false;
@@ -174,6 +201,14 @@ class DeviceNodeController extends ChangeNotifier {
         _scheduleReconnect('network change');
       }
     });
+
+    final batteryOptimizationIgnored = await _runtimeGuard.isBatteryOptimizationIgnored();
+    _state = _state.copyWith(
+      batteryOptimizationIgnored: batteryOptimizationIgnored,
+      lastInfo: batteryOptimizationIgnored
+          ? _state.lastInfo
+          : 'battery optimization aktif, nonaktifkan untuk stabilitas 100 Hz',
+    );
     notifyListeners();
   }
 
@@ -200,11 +235,6 @@ class DeviceNodeController extends ChangeNotifier {
     if (_state.connected) {
       return;
     }
-    if (_config.sessionId.isEmpty) {
-      _setInfo('session_id wajib diisi sebelum connect');
-      return;
-    }
-
     try {
       await _backendClient.registerDevice(_config);
       _socket = _socketClient.connect(_buildWsUri());
@@ -217,17 +247,19 @@ class DeviceNodeController extends ChangeNotifier {
         },
       );
 
-      final lastSeq = await _localStore.getLastSeq(_config.sessionId, _config.deviceId);
+      final helloSessionId = _config.sessionId.trim();
+      final lastSeq = helloSessionId.isEmpty ? 0 : await _localStore.getLastSeq(helloSessionId, _config.deviceId);
       _seq = lastSeq;
       _sendJson({
         'type': 'HELLO',
         'device_id': _config.deviceId,
         'device_role': _config.deviceRole,
-        'session_id': _config.sessionId,
+        'session_id': helloSessionId,
         'local_last_seq': lastSeq,
+        'enrollment_token': _config.enrollmentToken,
       });
 
-      _state = _state.copyWith(lastInfo: 'hello sent', sessionId: _config.sessionId, lastSeq: _seq);
+      _state = _state.copyWith(lastInfo: 'hello sent', sessionId: helloSessionId, lastSeq: _seq);
       notifyListeners();
 
       _startTimers();
@@ -244,6 +276,7 @@ class DeviceNodeController extends ChangeNotifier {
     _statusPushTimer?.cancel();
     _reconnectTimer?.cancel();
     _startBarrierTimer?.cancel();
+    await _runtimeGuard.disableRecordingGuard();
 
     await _wsSub?.cancel();
     _wsSub = null;
@@ -319,7 +352,7 @@ class DeviceNodeController extends ChangeNotifier {
           unawaited(_handleStopCommand(command));
           break;
         case ControlCommandType.SYNC_CLOCK:
-          _sendClockSyncPong(commandId: command.commandId);
+          _sendClockSyncPong(commandId: command.commandId, sessionId: command.sessionId);
           break;
         case ControlCommandType.SYNC_REQUIRED:
           _setInfo('sync required received');
@@ -345,21 +378,24 @@ class DeviceNodeController extends ChangeNotifier {
     final type = payload['type'] as String? ?? '';
     if (type == 'HELLO_ACK') {
       final backendLastSeq = (payload['backend_last_seq'] as num? ?? 0).toInt();
+      final ackSessionId = (payload['session_id'] as String? ?? '').trim();
       _state = _state.copyWith(
         connected: true,
-        sessionId: (payload['session_id'] as String? ?? _state.sessionId),
+        sessionId: ackSessionId.isEmpty ? _state.sessionId : ackSessionId,
         lastInfo: 'connected',
       );
       notifyListeners();
-      unawaited(_localStore.clearAllInflight(
-        sessionId: _state.sessionId,
-        deviceId: _config.deviceId,
-      ));
-      unawaited(_localStore.resetUploadFlagsAfterSeq(
-        sessionId: _state.sessionId,
-        deviceId: _config.deviceId,
-        backendLastSeq: backendLastSeq,
-      ));
+      if (_state.sessionId.isNotEmpty) {
+        unawaited(_localStore.clearAllInflight(
+          sessionId: _state.sessionId,
+          deviceId: _config.deviceId,
+        ));
+        unawaited(_localStore.resetUploadFlagsAfterSeq(
+          sessionId: _state.sessionId,
+          deviceId: _config.deviceId,
+          backendLastSeq: backendLastSeq,
+        ));
+      }
       return;
     }
 
@@ -370,7 +406,10 @@ class DeviceNodeController extends ChangeNotifier {
     }
 
     if (type == 'CLOCK_SYNC_PING') {
-      _sendClockSyncPong(pingId: payload['ping_id'] as String? ?? '');
+      _sendClockSyncPong(
+        pingId: payload['ping_id'] as String? ?? '',
+        sessionId: payload['session_id'] as String? ?? '',
+      );
       return;
     }
 
@@ -431,6 +470,9 @@ class DeviceNodeController extends ChangeNotifier {
       ..reset()
       ..start();
     _sampleWindowCount = 0;
+    _intervalWindowMs.clear();
+    _lastSampleTimestampNs = null;
+    _targetSamplingHz = command.hasTargetSamplingHz() && command.targetSamplingHz > 0 ? command.targetSamplingHz : 100;
 
     final nowNs = DateTime.now().microsecondsSinceEpoch * 1000;
     final requestedStartNs = command.hasServerStartTimeUnixNs() ? command.serverStartTimeUnixNs.toInt() : nowNs;
@@ -453,12 +495,16 @@ class DeviceNodeController extends ChangeNotifier {
     _sampleWindowCount = 0;
 
     _sensorSampler.start(
-      frequencyHz: command.hasTargetSamplingHz() && command.targetSamplingHz > 0 ? command.targetSamplingHz : 100,
+      frequencyHz: _targetSamplingHz,
       logicalStartUnixNs: targetStartNs,
       onSample: (frame) {
         _onSample(sessionId, frame);
       },
     );
+
+    unawaited(_runtimeGuard.enableRecordingGuard(sessionId: sessionId, deviceId: _config.deviceId));
+    _state = _state.copyWith(foregroundGuardActive: true);
+    notifyListeners();
 
     unawaited(_localStore.updateSessionStartMarkers(
       sessionId: sessionId,
@@ -473,6 +519,7 @@ class DeviceNodeController extends ChangeNotifier {
     final sessionId = command.sessionId.isNotEmpty ? command.sessionId : _state.sessionId;
     _startBarrierTimer?.cancel();
     _sensorSampler.stop();
+    await _runtimeGuard.disableRecordingGuard();
 
     if (sessionId.isNotEmpty) {
       await _localStore.updateSessionStatus(
@@ -493,14 +540,15 @@ class DeviceNodeController extends ChangeNotifier {
     await _pushDeviceStatus();
   }
 
-  void _sendClockSyncPong({String? pingId, String? commandId}) {
+  void _sendClockSyncPong({String? pingId, String? commandId, String? sessionId}) {
     final usedPingId = pingId ?? commandId ?? '';
     if (usedPingId.isEmpty) {
       return;
     }
+    final session = (sessionId != null && sessionId.trim().isNotEmpty) ? sessionId.trim() : _state.sessionId;
     _sendJson({
       'type': 'CLOCK_SYNC_PONG',
-      'session_id': _state.sessionId,
+      'session_id': session,
       'device_id': _config.deviceId,
       'ping_id': usedPingId,
       'device_unix_ns': DateTime.now().microsecondsSinceEpoch * 1000,
@@ -511,9 +559,28 @@ class DeviceNodeController extends ChangeNotifier {
     _seq += 1;
     _sampleWindowCount += 1;
 
+    if (_lastSampleTimestampNs != null) {
+      final intervalMs = (frame.timestampDeviceUnixNs - _lastSampleTimestampNs!) / 1000000.0;
+      if (intervalMs > 0 && intervalMs < 2000) {
+        _intervalWindowMs.add(intervalMs);
+        if (_intervalWindowMs.length > 256) {
+          _intervalWindowMs.removeAt(0);
+        }
+      }
+    }
+    _lastSampleTimestampNs = frame.timestampDeviceUnixNs;
+
     if (_sampleWindow.elapsedMilliseconds >= 1000) {
       final hz = _sampleWindowCount / (_sampleWindow.elapsedMilliseconds / 1000);
-      _state = _state.copyWith(effectiveHz: hz, lastSeq: _seq);
+      final p99Ms = _computeP99IntervalMs();
+      final targetIntervalMs = 1000.0 / (_targetSamplingHz <= 0 ? 100 : _targetSamplingHz);
+      final jitterP99Ms = (p99Ms - targetIntervalMs).abs();
+      _state = _state.copyWith(
+        effectiveHz: hz,
+        intervalP99Ms: p99Ms,
+        jitterP99Ms: jitterP99Ms,
+        lastSeq: _seq,
+      );
       notifyListeners();
       _sampleWindow
         ..reset()
@@ -533,6 +600,22 @@ class DeviceNodeController extends ChangeNotifier {
     final total = await _localStore.totalSampleCount(sessionId: sessionId, deviceId: _config.deviceId);
     _state = _state.copyWith(pendingSamples: pending, localSamples: total, lastSeq: _seq);
     notifyListeners();
+  }
+
+  double _computeP99IntervalMs() {
+    if (_intervalWindowMs.isEmpty) {
+      return 0;
+    }
+    final sorted = List<double>.from(_intervalWindowMs)..sort();
+    final rawIndex = (sorted.length * 0.99).ceil() - 1;
+    final index = rawIndex < 0
+        ? 0
+        : (rawIndex >= sorted.length ? sorted.length - 1 : rawIndex);
+    return sorted[index];
+  }
+
+  Future<void> openBatteryOptimizationSettings() async {
+    await _runtimeGuard.openBatteryOptimizationSettings();
   }
 
   Future<void> _uploadPendingBatches() async {
@@ -675,6 +758,8 @@ class DeviceNodeController extends ChangeNotifier {
         batteryPercent: battery.toDouble(),
         storageFreeMb: storageFreeMb,
         effectiveHz: _state.effectiveHz,
+        intervalP99Ms: _state.intervalP99Ms,
+        jitterP99Ms: _state.jitterP99Ms,
       );
       _state = _state.copyWith(batteryPercent: battery, storageFreeMb: storageFreeMb);
       notifyListeners();
