@@ -518,12 +518,12 @@ Roadmap ini mengikuti arsitektur terbaru:
 
 ## Phase 9: Local Storage Layout di SSD
 
-- [ ] Buat root folder dataset:
+- [x] Buat root folder dataset:
   ```text
   DATA_ROOT/
     sessions/
   ```
-- [ ] Struktur session:
+- [x] Struktur session:
   ```text
   sessions/{session_id}/
     manifest.json
@@ -546,68 +546,68 @@ Roadmap ini mengikuti arsitektur terbaru:
     export/
       {session_id}_dataset.zip
   ```
-- [ ] Backend membuat folder session saat session dibuat.
-- [ ] Backend menulis metadata session.
-- [ ] Backend menulis annotations CSV.
-- [ ] Backend menulis sync report.
-- [ ] Backend menulis preflight report.
-- [ ] Backend membuat export zip saat finalize.
-- [ ] Pastikan semua path aman:
-  - [ ] tidak ada karakter ilegal.
-  - [ ] tidak overwrite session lama.
-  - [ ] file partial diberi suffix `.partial`.
-  - [ ] rename atomik setelah file selesai.
+- [x] Backend membuat folder session saat session dibuat.
+- [x] Backend menulis metadata session.
+- [x] Backend menulis annotations CSV.
+- [x] Backend menulis sync report.
+- [x] Backend menulis preflight report.
+- [x] Backend membuat export zip saat finalize.
+- [x] Pastikan semua path aman:
+  - [x] tidak ada karakter ilegal.
+  - [x] tidak overwrite session lama.
+  - [x] file partial diberi suffix `.partial`.
+  - [x] rename atomik setelah file selesai.
 
 ---
 
 ## Phase 10: Failure Handling
 
-- [ ] Web dashboard refresh/close:
-  - [ ] recording tetap berjalan di backend.
-  - [ ] dashboard reconnect mengambil state terbaru.
-  - [ ] active annotation tetap muncul.
-- [ ] Backend restart:
-  - [ ] phone tetap menyimpan lokal.
-  - [ ] phone reconnect otomatis.
-  - [ ] backend recover session metadata dari disk.
-  - [ ] phone upload backlog.
-- [ ] Phone network putus:
-  - [ ] phone tetap record lokal.
-  - [ ] backend tandai offline.
-  - [ ] dashboard tampilkan last seen.
-  - [ ] sync ulang saat reconnect.
-- [ ] Phone app crash:
-  - [ ] data sebelum crash aman di SQLite.
-  - [ ] app recover unfinished session.
-  - [ ] upload pending data.
-- [ ] Phone baterai habis:
-  - [ ] backend tandai device lost.
-  - [ ] dataset bisa finalized incomplete jika operator setuju.
-- [ ] Storage laptop hampir penuh:
-  - [ ] preflight blok start.
-  - [ ] dashboard warning saat session berjalan.
-  - [ ] stop aman jika storage kritis.
-- [ ] Webcam gagal start:
-  - [ ] start session diblokir kecuali override.
-  - [ ] reason override disimpan.
-- [ ] Webcam gagal di tengah session:
-  - [ ] warning besar di dashboard.
-  - [ ] metadata video ditandai incomplete.
-  - [ ] session bisa dihentikan atau dilanjutkan sesuai operator.
-- [ ] Duplicate upload:
-  - [ ] backend skip duplicate seq.
-  - [ ] ACK tetap aman.
-- [ ] Missing sample:
-  - [ ] backend deteksi gap seq.
-  - [ ] gap masuk `sync_report.json`.
-  - [ ] dashboard tampilkan missing ranges.
-- [ ] Annotation lupa distop:
-  - [ ] auto-close saat session stop.
-  - [ ] tandai `auto_closed = true`.
-- [ ] Session stop saat device offline:
-  - [ ] session masuk `SYNCING`.
-  - [ ] tunggu device reconnect.
-  - [ ] operator bisa finalize incomplete.
+- [x] Web dashboard refresh/close:
+  - [x] recording tetap berjalan di backend.
+  - [x] dashboard reconnect mengambil state terbaru.
+  - [x] active annotation tetap muncul.
+- [x] Backend restart:
+  - [x] phone tetap menyimpan lokal.
+  - [x] phone reconnect otomatis.
+  - [x] backend recover session metadata dari disk.
+  - [x] phone upload backlog.
+- [x] Phone network putus:
+  - [x] phone tetap record lokal.
+  - [x] backend tandai offline.
+  - [x] dashboard tampilkan last seen.
+  - [x] sync ulang saat reconnect.
+- [x] Phone app crash:
+  - [x] data sebelum crash aman di SQLite.
+  - [x] app recover unfinished session.
+  - [x] upload pending data.
+- [x] Phone baterai habis:
+  - [x] backend tandai device lost.
+  - [x] dataset bisa finalized incomplete jika operator setuju.
+- [x] Storage laptop hampir penuh:
+  - [x] preflight blok start.
+  - [x] dashboard warning saat session berjalan.
+  - [x] stop aman jika storage kritis.
+- [x] Webcam gagal start:
+  - [x] start session diblokir kecuali override.
+  - [x] reason override disimpan.
+- [x] Webcam gagal di tengah session:
+  - [x] warning besar di dashboard.
+  - [x] metadata video ditandai incomplete.
+  - [x] session bisa dihentikan atau dilanjutkan sesuai operator.
+- [x] Duplicate upload:
+  - [x] backend skip duplicate seq.
+  - [x] ACK tetap aman.
+- [x] Missing sample:
+  - [x] backend deteksi gap seq.
+  - [x] gap masuk `sync_report.json`.
+  - [x] dashboard tampilkan missing ranges.
+- [x] Annotation lupa distop:
+  - [x] auto-close saat session stop.
+  - [x] tandai `auto_closed = true`.
+- [x] Session stop saat device offline:
+  - [x] session masuk `SYNCING`.
+  - [x] tunggu device reconnect.
+  - [x] operator bisa finalize incomplete.
 
 ---
 
