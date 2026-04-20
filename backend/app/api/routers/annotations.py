@@ -2,16 +2,18 @@ import json
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_request_actor, require_operator_access
 from app.db.models import Annotation, AnnotationAudit
 from app.db.session import get_db
 from app.schemas.annotations import AnnotationAuditResponse, AnnotationPatchRequest, AnnotationResponse, AnnotationStartRequest
 from app.services.annotation_audit import write_annotation_audit
+from app.services.operator_audit import write_operator_action_audit
 from app.services.ws_runtime import ws_runtime
 
-router = APIRouter(tags=["annotations"])
+router = APIRouter(tags=["annotations"], dependencies=[Depends(require_operator_access)])
 DBSession = Annotated[Session, Depends(get_db)]
 ANNOTATION_NOT_FOUND = "annotation not found"
 SESSION_ID_PATTERN = r"^\d{8}_\d{6}_[A-F0-9]{8}$"
@@ -42,6 +44,7 @@ async def start_annotation(
     session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)],
     payload: AnnotationStartRequest,
     db: DBSession,
+    request: Request,
 ) -> AnnotationResponse:
     annotation = Annotation(
         annotation_id=_next_annotation_id(db, session_id),
@@ -53,6 +56,18 @@ async def start_annotation(
     db.add(annotation)
     db.commit()
     db.refresh(annotation)
+    operator_id, operator_type = get_request_actor(request)
+    write_operator_action_audit(
+        db,
+        operator_id=operator_id or "operator",
+        operator_type=operator_type or "operator",
+        action="annotation.start",
+        session_id=session_id,
+        target_type="annotation",
+        target_id=annotation.annotation_id,
+        details={"label": annotation.label},
+    )
+    db.commit()
 
     await ws_runtime.publish_annotation_event(
         session_id,
@@ -73,6 +88,7 @@ async def stop_annotation(
     session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)],
     annotation_id: Annotated[str, Path(pattern=ANNOTATION_ID_PATTERN)],
     db: DBSession,
+    request: Request,
 ) -> AnnotationResponse:
     annotation = db.get(Annotation, annotation_id)
     if not annotation or annotation.session_id != session_id or annotation.deleted:
@@ -88,6 +104,17 @@ async def stop_annotation(
         session_id=annotation.session_id,
         before_payload=before,
         after_payload=_snapshot(annotation),
+    )
+    operator_id, operator_type = get_request_actor(request)
+    write_operator_action_audit(
+        db,
+        operator_id=operator_id or "operator",
+        operator_type=operator_type or "operator",
+        action="annotation.stop",
+        session_id=session_id,
+        target_type="annotation",
+        target_id=annotation.annotation_id,
+        details={"label": annotation.label},
     )
     db.commit()
 
@@ -145,6 +172,7 @@ async def patch_annotation(
     annotation_id: Annotated[str, Path(pattern=ANNOTATION_ID_PATTERN)],
     payload: AnnotationPatchRequest,
     db: DBSession,
+    request: Request,
 ) -> AnnotationResponse:
     annotation = db.get(Annotation, annotation_id)
     if not annotation or annotation.deleted:
@@ -165,6 +193,17 @@ async def patch_annotation(
         before_payload=before,
         after_payload=_snapshot(annotation),
     )
+    operator_id, operator_type = get_request_actor(request)
+    write_operator_action_audit(
+        db,
+        operator_id=operator_id or "operator",
+        operator_type=operator_type or "operator",
+        action="annotation.patch",
+        session_id=annotation.session_id,
+        target_type="annotation",
+        target_id=annotation.annotation_id,
+        details={"fields": sorted(list(updates.keys()))},
+    )
     db.commit()
 
     await ws_runtime.publish_annotation_event(
@@ -181,7 +220,11 @@ async def patch_annotation(
 
 
 @router.delete("/annotations/{annotation_id}", responses=ANNOTATION_RESPONSES_404)
-async def delete_annotation(annotation_id: Annotated[str, Path(pattern=ANNOTATION_ID_PATTERN)], db: DBSession) -> dict:
+async def delete_annotation(
+    annotation_id: Annotated[str, Path(pattern=ANNOTATION_ID_PATTERN)],
+    db: DBSession,
+    request: Request,
+) -> dict:
     annotation = db.get(Annotation, annotation_id)
     if not annotation:
         raise HTTPException(status_code=404, detail=ANNOTATION_NOT_FOUND)
@@ -196,6 +239,17 @@ async def delete_annotation(annotation_id: Annotated[str, Path(pattern=ANNOTATIO
         session_id=annotation.session_id,
         before_payload=before,
         after_payload=_snapshot(annotation),
+    )
+    operator_id, operator_type = get_request_actor(request)
+    write_operator_action_audit(
+        db,
+        operator_id=operator_id or "operator",
+        operator_type=operator_type or "operator",
+        action="annotation.delete",
+        session_id=annotation.session_id,
+        target_type="annotation",
+        target_id=annotation.annotation_id,
+        details={},
     )
     db.commit()
 
