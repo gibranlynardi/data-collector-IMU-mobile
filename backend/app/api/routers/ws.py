@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
-from app.db.models import Device, Session as SessionModel, SessionDevice
+from app.db.models import Annotation, Device, Session as SessionModel, SessionDevice
 from app.db.session import SessionLocal
 from generated.control_pb2 import ControlCommand, ControlCommandType
 from generated.sensor_sample_pb2 import SensorBatch
@@ -502,6 +502,42 @@ async def ws_dashboard(websocket: WebSocket, session_id: str) -> None:
     try:
         snapshot = await ws_runtime.snapshot_for_dashboard(session_id)
         await connection.queue.put(snapshot)
+        with SessionLocal() as db:
+            session = db.get(SessionModel, session_id)
+            if session is not None:
+                await connection.queue.put(
+                    {
+                        "type": "SESSION_STATE",
+                        "session_id": session_id,
+                        "status": session.status,
+                    }
+                )
+
+            active_annotations = (
+                db.query(Annotation)
+                .filter(
+                    Annotation.session_id == session_id,
+                    Annotation.deleted.is_(False),
+                    Annotation.ended_at.is_(None),
+                )
+                .order_by(Annotation.started_at.asc())
+                .all()
+            )
+            await connection.queue.put(
+                {
+                    "type": "ANNOTATIONS_SNAPSHOT",
+                    "session_id": session_id,
+                    "active_annotations": [
+                        {
+                            "annotation_id": item.annotation_id,
+                            "label": item.label,
+                            "notes": item.notes,
+                            "started_at": item.started_at.isoformat() if item.started_at else None,
+                        }
+                        for item in active_annotations
+                    ],
+                }
+            )
         await connection.queue.put(
             {
                 "type": "VIDEO_RECORDER_STATUS",
