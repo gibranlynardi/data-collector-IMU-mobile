@@ -613,42 +613,42 @@ Roadmap ini mengikuti arsitektur terbaru:
 
 ## Phase 11: Session Finalization dan Export
 
-- [ ] Saat `STOP_SESSION`:
-  - [ ] broadcast stop ke semua phone online.
-  - [ ] stop webcam recorder.
-  - [ ] flush semua CSV writer.
-  - [ ] close annotation aktif.
-  - [ ] ubah status session ke `ENDING`.
-- [ ] Backend cek completeness:
-  - [ ] semua required device punya data.
-  - [ ] sample count masuk akal.
-  - [ ] tidak ada gap besar.
-  - [ ] video file valid.
-  - [ ] annotation lengkap.
-- [ ] Jika masih ada pending upload:
-  - [ ] status `SYNCING`.
-  - [ ] dashboard tampilkan device yang belum selesai.
-- [ ] Jika lengkap:
-  - [ ] status `COMPLETED`.
-  - [ ] buat manifest final.
-  - [ ] buat export zip.
-- [ ] Jika ada failure permanen:
-  - [ ] operator bisa `finalize incomplete`.
-  - [ ] wajib isi alasan.
-  - [ ] status `INCOMPLETE_FINALIZED`.
-- [ ] Export dataset harus berisi:
-  - [ ] CSV per device.
-  - [ ] video mp4.
-  - [ ] annotations.
-  - [ ] manifest.
-  - [ ] sync report.
-  - [ ] preflight report.
-  - [ ] failure/warning log.
-- [ ] Buat opsi export labeled dataset:
-  - [ ] join sample dengan annotation interval.
-  - [ ] output per device.
-  - [ ] output gabungan.
-  - [ ] include unlabeled sebagai empty/null.
+- [x] Saat `STOP_SESSION`:
+  - [x] broadcast stop ke semua phone online.
+  - [x] stop webcam recorder.
+  - [x] flush semua CSV writer.
+  - [x] close annotation aktif.
+  - [x] ubah status session ke `ENDING`.
+- [x] Backend cek completeness:
+  - [x] semua required device punya data.
+  - [x] sample count masuk akal.
+  - [x] tidak ada gap besar.
+  - [x] video file valid.
+  - [x] annotation lengkap.
+- [x] Jika masih ada pending upload:
+  - [x] status `SYNCING`.
+  - [x] dashboard tampilkan device yang belum selesai.
+- [x] Jika lengkap:
+  - [x] status `COMPLETED`.
+  - [x] buat manifest final.
+  - [x] buat export zip.
+- [x] Jika ada failure permanen:
+  - [x] operator bisa `finalize incomplete`.
+  - [x] wajib isi alasan.
+  - [x] status `INCOMPLETE_FINALIZED`.
+- [x] Export dataset harus berisi:
+  - [x] CSV per device.
+  - [x] video mp4.
+  - [x] annotations.
+  - [x] manifest.
+  - [x] sync report.
+  - [x] preflight report.
+  - [x] failure/warning log.
+- [x] Buat opsi export labeled dataset:
+  - [x] join sample dengan annotation interval.
+  - [x] output per device.
+  - [x] output gabungan.
+  - [x] include unlabeled sebagai empty/null.
 
 ---
 
