@@ -99,6 +99,60 @@ class VideoRecorderService:
                 "webcam_detail": f"opencv unavailable or camera check failed: {exc}",
             }
 
+    def run_test_mode(self, duration_seconds: int = 10) -> dict[str, Any]:
+        settings = self._settings
+        duration_seconds = max(1, int(duration_seconds))
+        source = settings.webcam_path if settings.webcam_path else settings.webcam_index
+        test_dir = settings.data_root / "webcam_test"
+        test_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        file_path = test_dir / f"webcam_test_{timestamp}.mp4"
+
+        cv2 = self._import_cv2()
+        cap = cv2.VideoCapture(source)
+        if not cap.isOpened():
+            return {
+                "status": "failed",
+                "reason": "camera_unavailable",
+                "file_path": str(file_path),
+                "frame_count": 0,
+                "valid_mp4": False,
+            }
+
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or settings.webcam_target_width)
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or settings.webcam_target_height)
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        if fps <= 1.0:
+            fps = settings.webcam_target_fps
+
+        fourcc = cv2.VideoWriter_fourcc(*settings.webcam_codec)
+        writer = cv2.VideoWriter(str(file_path), fourcc, fps, (width, height))
+
+        frame_count = 0
+        started = time.monotonic()
+        try:
+            while time.monotonic() - started < duration_seconds:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                writer.write(frame)
+                frame_count += 1
+        finally:
+            with suppress(Exception):
+                writer.release()
+            with suppress(Exception):
+                cap.release()
+
+        valid_mp4 = file_path.exists() and file_path.stat().st_size > 0 and frame_count > 0
+        return {
+            "status": "completed" if valid_mp4 else "failed",
+            "file_path": str(file_path),
+            "duration_seconds": duration_seconds,
+            "fps": round(fps, 2),
+            "frame_count": frame_count,
+            "valid_mp4": bool(valid_mp4),
+        }
+
     def start_session_recording(self, db: Session, session_id: str, allow_override: bool = False) -> dict[str, Any]:
         with self._lock:
             if session_id in self._active:
@@ -217,6 +271,15 @@ class VideoRecorderService:
                     self.stop_session_recording(db, session_id, suppress_errors=True)
             except Exception:
                 logger.exception("Failed during close_all for session %s", session_id)
+
+    def collect_runtime_metrics(self) -> dict[str, float]:
+        with self._lock:
+            now = time.monotonic()
+            payload: dict[str, float] = {}
+            for session_id, state in self._active.items():
+                elapsed = max(0.001, now - state.started_monotonic)
+                payload[session_id] = round(state.frame_count / elapsed, 3)
+            return payload
 
     def get_runtime_status(self, db: Session, session_id: str) -> dict[str, Any]:
         with self._lock:
