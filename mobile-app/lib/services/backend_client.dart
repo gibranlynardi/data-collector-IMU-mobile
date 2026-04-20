@@ -4,7 +4,20 @@ import 'package:http/http.dart' as http;
 
 import '../models/node_config.dart';
 
-class BackendClient {
+abstract class BackendClientPort {
+  Future<void> registerDevice(NodeConfig config);
+  Future<void> patchDeviceStatus({
+    required NodeConfig config,
+    required bool connected,
+    required bool recording,
+    double? batteryPercent,
+    int? storageFreeMb,
+    double? effectiveHz,
+  });
+  void close();
+}
+
+class BackendClient implements BackendClientPort {
   BackendClient({http.Client? client}) : _client = client ?? http.Client();
 
   final http.Client _client;
