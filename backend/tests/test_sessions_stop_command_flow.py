@@ -14,6 +14,7 @@ from app.db.models import Annotation, AnnotationAudit, Device, Session as Sessio
 
 
 def _setup_db(tmp_path):
+    sessions_router.csv_writer_service.close_all()
     db_file = tmp_path / "metadata.db"
     engine = create_engine(f"sqlite:///{db_file.as_posix()}", connect_args={"check_same_thread": False})
     testing_session_local = sessionmaker(bind=engine, autoflush=False, autocommit=False)
