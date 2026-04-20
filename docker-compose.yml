@@ -7,6 +7,8 @@ services:
       dockerfile: Dockerfile
     container_name: imu-backend
     restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
     environment:
       BACKEND_HOST: 0.0.0.0
       BACKEND_REST_PORT: 8000
@@ -24,6 +26,23 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./data:/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     depends_on:
       db:
         condition: service_healthy
@@ -35,18 +54,42 @@ services:
       dockerfile: Dockerfile
     container_name: imu-dashboard
     restart: unless-stopped
+    init: true
+    stop_grace_period: 20s
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:${BACKEND_PORT:-8000}
       NEXT_PUBLIC_WS_BASE_URL: ws://localhost:${BACKEND_PORT:-8000}
     ports:
       - "${DASHBOARD_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:3000",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
   db:
     image: postgres:16-alpine
     container_name: imu-db
     restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
     profiles: ["database"]
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-imu_collector}
@@ -61,6 +104,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   pg_data:
