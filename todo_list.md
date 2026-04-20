@@ -686,38 +686,39 @@ Roadmap ini mengikuti arsitektur terbaru:
 
 ## Phase 13: Monitoring, Simulator, dan QA
 
-- [ ] Buat simulator device untuk test tanpa 3 HP:
-  - [ ] simulate chest.
-  - [ ] simulate waist.
-  - [ ] simulate thigh.
-  - [ ] emit Protobuf 100 Hz.
-  - [ ] simulate disconnect/reconnect.
-- [ ] Buat webcam test mode:
-  - [ ] record 10 detik.
-  - [ ] validate output mp4.
-  - [ ] hitung frame count.
-- [ ] Tambahkan backend metrics:
-  - [ ] samples/sec per device.
-  - [ ] effective Hz.
-  - [ ] dropped/gap samples.
-  - [ ] websocket reconnect count.
-  - [ ] upload retry count.
-  - [ ] CSV write latency.
-  - [ ] video fps.
-  - [ ] storage free.
-- [ ] Tambahkan test backend:
-  - [ ] Protobuf decode.
-  - [ ] batch ACK.
-  - [ ] duplicate seq.
-  - [ ] missing seq detection.
-  - [ ] annotation start/stop.
-  - [ ] session state machine.
-  - [ ] video recorder start/stop mocked.
-- [ ] Tambahkan test Flutter:
-  - [ ] local SQLite persistence.
-  - [ ] seq monotonic.
-  - [ ] reconnect upload.
-  - [ ] command handling.
+- [x] Buat simulator device untuk test tanpa 3 HP:
+  - [x] simulate chest.
+  - [x] simulate waist.
+  - [x] simulate thigh.
+  - [x] emit Protobuf 100 Hz.
+  - [x] simulate disconnect/reconnect.
+- [x] Buat webcam test mode:
+  - [x] record 10 detik.
+  - [x] validate output mp4.
+  - [x] hitung frame count.
+- [x] Tambahkan backend metrics:
+  - [x] samples/sec per device.
+  - [x] effective Hz.
+  - [x] dropped/gap samples.
+  - [x] websocket reconnect count.
+  - [x] upload retry count.
+  - [x] CSV write latency.
+  - [x] video fps.
+  - [x] storage free.
+- [x] Tambahkan test backend:
+  - [x] Protobuf decode.
+  - [x] batch ACK.
+  - [x] duplicate seq.
+  - [x] missing seq detection.
+  - [x] annotation start/stop.
+  - [x] session state machine.
+  - [x] video recorder start/stop mocked.
+- [x] Tambahkan test Flutter:
+  - [x] local SQLite persistence.
+  - [x] seq monotonic.
+  - [x] reconnect upload.
+  - [x] command handling.
+- Catatan: prosedur uji lapangan terdokumentasi di `scripts/phase13_field_runbook.md`.
 - [ ] Uji skenario lapangan:
   - [ ] start dengan 3 phone online.
   - [ ] matikan Wi-Fi salah satu phone saat recording.
