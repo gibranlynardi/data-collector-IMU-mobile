@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 import app.api.routers.sessions as sessions_router
 import app.db.session as db_session
 import app.main as main_app
+import app.services.storage_monitor as storage_monitor_module
 from app.db.base import Base
 from app.db.models import Annotation, AnnotationAudit, Device, Session as SessionModel, SessionDevice
 
@@ -20,6 +21,7 @@ def _setup_db(tmp_path):
     db_session.engine = engine
     db_session.SessionLocal = testing_session_local
     main_app.engine = engine
+    storage_monitor_module.SessionLocal = testing_session_local
     Base.metadata.create_all(bind=engine)
     return testing_session_local
 
@@ -175,7 +177,10 @@ def test_finalize_incomplete_allowed_from_syncing(tmp_path) -> None:
         db.commit()
 
     with TestClient(main_app.app) as client:
-        response = client.post(f"/sessions/{session_id}/finalize", json={"incomplete": True})
+        response = client.post(
+            f"/sessions/{session_id}/finalize",
+            json={"incomplete": True, "reason": "device offline permanen saat syncing"},
+        )
 
     assert response.status_code == 200
     assert response.json()["status"] == "INCOMPLETE_FINALIZED"
