@@ -79,6 +79,9 @@ class DeviceWriterState:
     last_flush_monotonic: float = field(default_factory=time.monotonic)
     raw_batch_count: int = 0
     raw_total_bytes: int = 0
+    write_call_count: int = 0
+    total_write_latency_ms: float = 0.0
+    max_write_latency_ms: float = 0.0
 
 
 class CsvWriterService:
@@ -268,6 +271,7 @@ class CsvWriterService:
 
         with self._lock:
             state = self._writers[key]
+            start_write_ms = time.perf_counter() * 1000.0
             written = 0
             duplicates = 0
             gaps_before = len(state.missing_ranges)
@@ -324,12 +328,37 @@ class CsvWriterService:
             self._flush_if_due(state)
             self._write_state_file(state)
 
+            elapsed_ms = (time.perf_counter() * 1000.0) - start_write_ms
+            state.write_call_count += 1
+            state.total_write_latency_ms += elapsed_ms
+            if elapsed_ms > state.max_write_latency_ms:
+                state.max_write_latency_ms = elapsed_ms
+
             return {
                 "written": written,
                 "duplicates": duplicates,
                 "last_seq": state.last_seq,
                 "missing_ranges_added": len(state.missing_ranges) - gaps_before,
             }
+
+    def collect_runtime_metrics(self) -> dict[str, dict[str, float | int | str]]:
+        with self._lock:
+            payload: dict[str, dict[str, float | int | str]] = {}
+            for (session_id, device_id), state in self._writers.items():
+                avg_latency = (
+                    state.total_write_latency_ms / state.write_call_count
+                    if state.write_call_count > 0
+                    else 0.0
+                )
+                payload[f"{session_id}:{device_id}"] = {
+                    "session_id": session_id,
+                    "device_id": device_id,
+                    "pending_since_flush": state.pending_since_flush,
+                    "write_call_count": state.write_call_count,
+                    "avg_write_latency_ms": round(avg_latency, 3),
+                    "max_write_latency_ms": round(state.max_write_latency_ms, 3),
+                }
+            return payload
 
     def flush_session(self, session_id: str) -> None:
         with self._lock:
