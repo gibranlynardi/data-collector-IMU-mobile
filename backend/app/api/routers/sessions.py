@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
@@ -24,7 +25,7 @@ from app.schemas.sessions import (
     SessionStatusResponse,
 )
 from app.schemas.video import VideoAnonymizeResponse, VideoMetadataResponse, VideoStatusResponse
-from app.services.artifacts import ensure_session_layout, finalize_session_artifacts, seed_session_artifacts
+from app.services.artifacts import ensure_session_layout, finalize_session_artifacts, materialize_session_storage, seed_session_artifacts
 from app.services.clock_sync import clock_sync_service
 from app.services.csv_writer import csv_writer_service
 from app.services.preflight import is_preflight_passed, store_preflight_report
@@ -74,6 +75,7 @@ def _cleanup_failed_start(db: Session, session_id: str, *, video_started: bool, 
         video_recorder_service.stop_session_recording(db, session_id, suppress_errors=True)
     except Exception:
         logger.exception("Failed stopping recorder during start rollback for session %s", session_id)
+    ws_runtime.stop_session_countdown_sync(session_id)
     if session_started:
         _rollback_start_failure(db, session_id)
 
@@ -178,6 +180,45 @@ def _close_session_outputs(db: Session, session_id: str) -> None:
     csv_writer_service.flush_session(session_id)
     csv_writer_service.close_session(session_id)
     video_recorder_service.stop_session_recording(db, session_id, suppress_errors=True)
+
+
+def _sensor_summary_files(session_id: str) -> list[Path]:
+    sensor_dir = get_settings().data_root / "sessions" / session_id / "sensor"
+    if not sensor_dir.exists():
+        return []
+    return sorted(sensor_dir.glob("*.summary.json"))
+
+
+def _update_missing_sample_sync_report(session_id: str) -> dict[str, object]:
+    missing_payload: list[dict[str, object]] = []
+    for summary_path in _sensor_summary_files(session_id):
+        try:
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+
+        ranges = payload.get("missing_seq_ranges")
+        if not isinstance(ranges, list) or not ranges:
+            continue
+        missing_payload.append(
+            {
+                "device_id": str(payload.get("device_id", "")),
+                "device_role": str(payload.get("device_role", "other")),
+                "missing_seq_ranges": ranges,
+                "sample_count": int(payload.get("sample_count", 0) or 0),
+                "duplicate_count": int(payload.get("duplicate_count", 0) or 0),
+            }
+        )
+
+    report = clock_sync_service.read_sync_report(session_id)
+    report["missing_ranges_by_device"] = missing_payload
+    report["missing_range_device_count"] = len(missing_payload)
+    clock_sync_service.write_sync_report(session_id, report)
+    return {
+        "session_id": session_id,
+        "missing_ranges_by_device": missing_payload,
+        "missing_range_device_count": len(missing_payload),
+    }
 
 
 def _resolve_assignment_devices(db: Session, assignments: list[object]) -> dict[str, Device]:
@@ -320,6 +361,7 @@ async def create_session(payload: SessionCreateRequest, request: Request, db: DB
 
     request.app.state.preflight_report = server_report
     store_preflight_report(db, server_report, session_id=session_id)
+    materialize_session_storage(db, session_id)
 
     await ws_runtime.publish_session_event(
         session_id,
@@ -398,6 +440,7 @@ async def start_session(
         session.started_at = agreed_started_at
         db.commit()
         db.refresh(session)
+        materialize_session_storage(db, session_id)
 
         authority = clock_sync_service.mark_session_started(
             session_id,
@@ -430,6 +473,10 @@ async def start_session(
             "status": session.status,
             "server_start_time_unix_ns": int(authority.server_start_time_unix_ns),
         },
+    )
+    await ws_runtime.start_session_countdown(
+        session_id=session_id,
+        start_at_unix_ns=int(authority.server_start_time_unix_ns),
     )
     await ws_runtime.publish_session_event(
         session_id,
@@ -527,6 +574,7 @@ async def stop_session(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTER
         raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
 
     if session.status in {"RUNNING", "SYNCING"}:
+        await ws_runtime.stop_session_countdown(session_id)
         await _auto_close_active_annotations(db, session_id)
 
     if session.status == "SYNCING":
@@ -565,6 +613,14 @@ async def stop_session(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTER
             except SessionStateError as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
             _close_session_outputs(db, session_id)
+            missing_summary = _update_missing_sample_sync_report(session_id)
+            await ws_runtime.publish_session_event(
+                session_id,
+                {
+                    "type": "MISSING_SAMPLE_SUMMARY",
+                    **missing_summary,
+                },
+            )
             clock_sync_service.clear_session(session_id)
     else:
         raise HTTPException(status_code=409, detail=f"invalid transition {session.status} -> ENDING")
@@ -585,6 +641,7 @@ async def stop_session(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTER
             "status": "stopped",
         },
     )
+    materialize_session_storage(db, session_id)
     return session
 
 
@@ -670,8 +727,10 @@ async def finalize_session(
     payload: SessionFinalizeRequest,
     db: DBSession,
 ) -> SessionResponse:
+    await ws_runtime.stop_session_countdown(session_id)
     try:
         session = session_manager.finalize_session(db, session_id, incomplete=payload.incomplete)
+        missing_summary = _update_missing_sample_sync_report(session_id)
         finalize_session_artifacts(db, session_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -694,4 +753,12 @@ async def finalize_session(
             "status": "idle",
         },
     )
+    await ws_runtime.publish_session_event(
+        session_id,
+        {
+            "type": "MISSING_SAMPLE_SUMMARY",
+            **missing_summary,
+        },
+    )
+    materialize_session_storage(db, session_id)
     return session
