@@ -7,7 +7,17 @@ import '../models/sample_frame.dart';
 
 typedef SampleCallback = void Function(SampleFrame frame);
 
-class SensorSampler {
+abstract class SensorSamplerPort {
+  bool get isRunning;
+  void start({
+    required int frequencyHz,
+    int? logicalStartUnixNs,
+    required SampleCallback onSample,
+  });
+  void stop();
+}
+
+class SensorSampler implements SensorSamplerPort {
   SensorSampler();
 
   static const double _gravity = 9.80665;
