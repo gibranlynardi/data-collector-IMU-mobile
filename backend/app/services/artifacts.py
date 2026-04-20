@@ -1,7 +1,8 @@
 import hashlib
 import json
 import re
-from csv import writer
+from csv import DictReader, DictWriter, writer
+from datetime import UTC
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -46,6 +47,7 @@ def seed_session_artifacts(db: Session, session_id: str, session_root: Path) -> 
         ("session", session_root / "session.json"),
         ("devices", session_root / "devices.json"),
         ("annotations", session_root / "annotations.csv"),
+        ("completeness_report", session_root / "completeness_report.json"),
         ("sync_report", session_root / "sync_report.json"),
         ("preflight_report", session_root / "preflight_report.json"),
         ("backend_log", session_root / "logs" / "backend.log"),
@@ -179,11 +181,108 @@ def materialize_session_storage(db: Session, session_id: str) -> None:
     _upsert_artifact_record(db, session_id, "session", session_json_path)
     _upsert_artifact_record(db, session_id, "devices", session_root / "devices.json")
     _upsert_artifact_record(db, session_id, "annotations", annotations_path)
+    _upsert_artifact_record(db, session_id, "completeness_report", session_root / "completeness_report.json")
     _upsert_artifact_record(db, session_id, "preflight_report", session_root / "preflight_report.json")
     _upsert_artifact_record(db, session_id, "backend_log", session_root / "logs" / "backend.log")
     _upsert_artifact_record(db, session_id, "device_events_log", session_root / "logs" / "device_events.log")
     _upsert_artifact_record(db, session_id, "warnings_log", session_root / "logs" / "warnings.log")
     db.commit()
+
+
+def _to_unix_ns(value) -> int | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return int(value.replace(tzinfo=UTC).timestamp() * 1_000_000_000)
+    return int(value.timestamp() * 1_000_000_000)
+
+
+def _build_annotation_intervals(db: Session, session_id: str) -> list[dict[str, object]]:
+    rows = (
+        db.query(Annotation)
+        .filter(Annotation.session_id == session_id, Annotation.deleted.is_(False))
+        .order_by(Annotation.started_at.asc(), Annotation.annotation_id.asc())
+        .all()
+    )
+    intervals: list[dict[str, object]] = []
+    for item in rows:
+        start_ns = _to_unix_ns(item.started_at)
+        end_ns = _to_unix_ns(item.ended_at)
+        if start_ns is None:
+            continue
+        intervals.append(
+            {
+                "annotation_id": item.annotation_id,
+                "label": item.label,
+                "start_ns": start_ns,
+                "end_ns": end_ns,
+            }
+        )
+    return intervals
+
+
+def _pick_annotation(ts_ns: int, intervals: list[dict[str, object]]) -> tuple[str, str]:
+    for item in intervals:
+        start_ns = int(item["start_ns"])
+        end_ns = int(item["end_ns"]) if item.get("end_ns") is not None else None
+        if ts_ns < start_ns:
+            continue
+        if end_ns is not None and ts_ns > end_ns:
+            continue
+        return str(item["annotation_id"]), str(item["label"])
+    return "", ""
+
+
+def build_labeled_dataset_exports(db: Session, session_id: str, session_root: Path) -> tuple[list[Path], Path]:
+    sensor_dir = session_root / "sensor"
+    export_labeled_dir = session_root / "export" / "labeled"
+    export_labeled_dir.mkdir(parents=True, exist_ok=True)
+
+    intervals = _build_annotation_intervals(db, session_id)
+    sensor_csv_files = sorted(path for path in sensor_dir.glob("*.csv") if path.is_file())
+
+    per_device_paths: list[Path] = []
+    all_rows: list[dict[str, str]] = []
+    all_fieldnames: list[str] = []
+
+    for csv_path in sensor_csv_files:
+        with csv_path.open("r", encoding="utf-8", newline="") as src:
+            reader = DictReader(src)
+            fieldnames = list(reader.fieldnames or [])
+            if "annotation_id" not in fieldnames:
+                fieldnames.append("annotation_id")
+            if "annotation_label" not in fieldnames:
+                fieldnames.append("annotation_label")
+            if not all_fieldnames:
+                all_fieldnames = list(fieldnames)
+
+            labeled_path = export_labeled_dir / f"{csv_path.stem}_labeled.csv"
+            with labeled_path.open("w", encoding="utf-8", newline="") as dst:
+                writer_obj = DictWriter(dst, fieldnames=fieldnames)
+                writer_obj.writeheader()
+                for row in reader:
+                    ts_raw = row.get("timestamp_server_unix_ns") or row.get("estimated_server_unix_ns") or row.get("timestamp_device_unix_ns")
+                    try:
+                        ts_ns = int(ts_raw or 0)
+                    except Exception:
+                        ts_ns = 0
+                    annotation_id, label = _pick_annotation(ts_ns, intervals)
+                    row["annotation_id"] = annotation_id
+                    row["annotation_label"] = label
+                    writer_obj.writerow(row)
+                    all_rows.append({name: str(row.get(name, "")) for name in fieldnames})
+
+            per_device_paths.append(labeled_path)
+
+    combined_path = export_labeled_dir / "all_devices_labeled.csv"
+    combined_fieldnames = all_fieldnames or ["annotation_id", "annotation_label"]
+    with combined_path.open("w", encoding="utf-8", newline="") as dst:
+        writer_obj = DictWriter(dst, fieldnames=combined_fieldnames)
+        writer_obj.writeheader()
+        for row in all_rows:
+            writer_obj.writerow({name: row.get(name, "") for name in combined_fieldnames})
+
+    return per_device_paths, combined_path
 
 
 def _checksum_sha256(path: Path) -> str:
@@ -227,6 +326,7 @@ def finalize_session_artifacts(db: Session, session_id: str) -> tuple[Path, Path
     settings = get_settings()
     session_root = ensure_session_layout(session_id)
     materialize_session_storage(db, session_id)
+    per_device_labeled, combined_labeled = build_labeled_dataset_exports(db, session_id, session_root)
 
     manifest_path = session_root / "manifest.json"
     export_dir = session_root / "export"
@@ -265,6 +365,9 @@ def finalize_session_artifacts(db: Session, session_id: str) -> tuple[Path, Path
 
     _upsert_artifact_record(db, session_id, "manifest", manifest_path)
     _upsert_artifact_record(db, session_id, "sync_report", session_root / "sync_report.json")
+    _upsert_artifact_record(db, session_id, "labeled_dataset_combined", combined_labeled)
+    for index, file_path in enumerate(per_device_labeled, start=1):
+        _upsert_artifact_record(db, session_id, f"labeled_dataset_device_{index}", file_path)
     _upsert_artifact_record(db, session_id, "export_zip", export_zip_path)
     db.commit()
     return manifest_path, export_zip_path
