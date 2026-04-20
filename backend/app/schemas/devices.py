@@ -21,6 +21,8 @@ class DevicePatchRequest(BaseModel):
     battery_percent: float | None = None
     storage_free_mb: int | None = None
     effective_hz: float | None = None
+    interval_p99_ms: float | None = None
+    jitter_p99_ms: float | None = None
 
 
 class DeviceResponse(BaseModel):
@@ -33,6 +35,8 @@ class DeviceResponse(BaseModel):
     battery_percent: float | None
     storage_free_mb: int | None
     effective_hz: float | None
+    interval_p99_ms: float | None
+    jitter_p99_ms: float | None
     created_at: datetime
     updated_at: datetime
 
