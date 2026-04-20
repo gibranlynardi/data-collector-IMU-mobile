@@ -185,14 +185,16 @@ class ClockSyncService:
     def write_sync_report(self, session_id: str, payload: dict[str, Any]) -> Path:
         path = self._sync_report_path(session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        partial_path = path.with_name(f"{path.name}.partial")
+        partial_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        partial_path.replace(path)
         return path
 
     def clear_session(self, session_id: str) -> None:
         self._session_time_authority.pop(session_id, None)
 
     def _sync_report_path(self, session_id: str) -> Path:
-        return self._settings.data_root / "sessions" / session_id / "sync_report.json"
+        return get_settings().data_root / "sessions" / session_id / "sync_report.json"
 
     def _classify_quality(self, *, offset_ms: float, latency_ms: float) -> str:
         abs_offset = abs(offset_ms)
