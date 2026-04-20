@@ -775,6 +775,33 @@ Roadmap ini mengikuti arsitektur terbaru:
 
 ---
 
+## Phase 15: Deployment Hardening
+
+- [x] Tambahkan log rotation container:
+  - [x] backend.
+  - [x] dashboard.
+  - [x] optional database.
+- [x] Tuning reliability service:
+  - [x] `init: true` untuk proses signal handling.
+  - [x] `stop_grace_period` agar shutdown lebih aman.
+  - [x] healthcheck backend.
+  - [x] healthcheck dashboard.
+  - [x] dependency dashboard menunggu backend healthy.
+- [x] Tambahkan backup data otomatis:
+  - [x] script backup `scripts/backup_data.ps1`.
+  - [x] retention policy via env.
+  - [x] backup tetap berhasil walau `metadata.db` terkunci (best effort).
+  - [x] helper scheduler `scripts/setup_backup_task.ps1`.
+- [x] Dokumentasi hardening:
+  - [x] runbook `scripts/phase15_hardening_runbook.md`.
+
+### Phase 15 Notes
+
+- Log rotation Compose memakai `json-file` dengan `max-size=10m` dan `max-file=5`.
+- Backup menghasilkan ZIP di folder `backups/` dan membersihkan backup lama berdasarkan retention days.
+
+---
+
 ## Urutan Implementasi Paling Disarankan
 
 1. Buat Protobuf schema sensor/status/control.
