@@ -5,8 +5,6 @@ import 'package:battery_plus/battery_plus.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:fixnum/fixnum.dart' as $fixnum;
 import 'package:flutter/foundation.dart';
-import 'package:web_socket_channel/io.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../generated/control.pb.dart';
 import '../generated/sensor_sample.pb.dart';
@@ -17,6 +15,7 @@ import 'backend_client.dart';
 import 'local_store.dart';
 import 'node_config_store.dart';
 import 'sensor_sampler.dart';
+import 'socket_client.dart';
 import 'storage_info_service.dart';
 
 class DeviceNodeState {
@@ -89,27 +88,49 @@ class DeviceNodeState {
 class DeviceNodeController extends ChangeNotifier {
   DeviceNodeController({
     required NodeConfigStore configStore,
-    required LocalStore localStore,
-    required BackendClient backendClient,
-    required SensorSampler sensorSampler,
+    required LocalStorePort localStore,
+    required BackendClientPort backendClient,
+    required SensorSamplerPort sensorSampler,
+    NodeSocketClient? socketClient,
+    Stream<List<ConnectivityResult>> Function()? connectivityChanges,
+    Future<int> Function()? batteryLevelProvider,
+    Future<int?> Function()? storageFreeProvider,
+    Duration reconnectDelay = const Duration(seconds: 3),
+    Duration heartbeatInterval = const Duration(seconds: 2),
+    Duration uploaderInterval = const Duration(milliseconds: 500),
+    Duration statusInterval = const Duration(seconds: 5),
   })  : _configStore = configStore,
         _localStore = localStore,
         _backendClient = backendClient,
-        _sensorSampler = sensorSampler;
+        _sensorSampler = sensorSampler,
+        _socketClient = socketClient ?? IoNodeSocketClient(),
+        _connectivityChanges = connectivityChanges ?? (() => Connectivity().onConnectivityChanged),
+        _batteryLevelProvider = batteryLevelProvider ?? (() => Battery().batteryLevel),
+        _storageFreeProvider = storageFreeProvider ?? (() => StorageInfoService().getFreeStorageMb()),
+        _reconnectDelay = reconnectDelay,
+        _heartbeatInterval = heartbeatInterval,
+        _uploaderInterval = uploaderInterval,
+        _statusInterval = statusInterval;
 
   final NodeConfigStore _configStore;
-  final LocalStore _localStore;
-  final BackendClient _backendClient;
-  final SensorSampler _sensorSampler;
-  final Battery _battery = Battery();
-  final StorageInfoService _storageInfoService = StorageInfoService();
+  final LocalStorePort _localStore;
+  final BackendClientPort _backendClient;
+  final SensorSamplerPort _sensorSampler;
+  final NodeSocketClient _socketClient;
+  final Stream<List<ConnectivityResult>> Function() _connectivityChanges;
+  final Future<int> Function() _batteryLevelProvider;
+  final Future<int?> Function() _storageFreeProvider;
+  final Duration _reconnectDelay;
+  final Duration _heartbeatInterval;
+  final Duration _uploaderInterval;
+  final Duration _statusInterval;
 
   NodeConfig _config = NodeConfig.defaults();
   DeviceNodeState _state = DeviceNodeState.initial();
   DeviceNodeState get state => _state;
   NodeConfig get config => _config;
 
-  WebSocketChannel? _channel;
+  NodeSocket? _socket;
   StreamSubscription? _wsSub;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   Timer? _heartbeatTimer;
@@ -148,7 +169,7 @@ class DeviceNodeController extends ChangeNotifier {
       lastSeq: lastSeq,
       lastInfo: recoveredSessionId == null ? 'config loaded' : 'recovered local session $recoveredSessionId',
     );
-    _connectivitySub = Connectivity().onConnectivityChanged.listen((_) {
+    _connectivitySub = _connectivityChanges().listen((_) {
       if (!_manualDisconnect && !_state.connected) {
         _scheduleReconnect('network change');
       }
@@ -186,8 +207,8 @@ class DeviceNodeController extends ChangeNotifier {
 
     try {
       await _backendClient.registerDevice(_config);
-      _channel = IOWebSocketChannel.connect(_buildWsUri());
-      _wsSub = _channel!.stream.listen(
+      _socket = _socketClient.connect(_buildWsUri());
+      _wsSub = _socket!.stream.listen(
         _onWsMessage,
         onDone: _onWsDone,
         onError: (Object error) {
@@ -227,8 +248,8 @@ class DeviceNodeController extends ChangeNotifier {
     await _wsSub?.cancel();
     _wsSub = null;
 
-    await _channel?.sink.close();
-    _channel = null;
+    await _socket?.close();
+    _socket = null;
 
     _state = _state.copyWith(connected: false, lastInfo: manual ? 'disconnected' : 'connection closed');
     notifyListeners();
@@ -244,24 +265,24 @@ class DeviceNodeController extends ChangeNotifier {
 
   void _startTimers() {
     _heartbeatTimer?.cancel();
-    _heartbeatTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+    _heartbeatTimer = Timer.periodic(_heartbeatInterval, (_) {
       _sendJson({'type': 'HEARTBEAT'});
     });
 
     _uploaderTimer?.cancel();
-    _uploaderTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+    _uploaderTimer = Timer.periodic(_uploaderInterval, (_) {
       unawaited(_uploadPendingBatches());
     });
 
     _statusPushTimer?.cancel();
-    _statusPushTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+    _statusPushTimer = Timer.periodic(_statusInterval, (_) {
       unawaited(_pushDeviceStatus());
     });
   }
 
   void _onWsDone() {
     if (_state.connected) {
-      _state = _state.copyWith(connected: false, recording: false, lastInfo: 'ws disconnected');
+      _state = _state.copyWith(connected: false, recording: _sensorSampler.isRunning, lastInfo: 'ws disconnected');
       notifyListeners();
     }
     if (!_manualDisconnect) {
@@ -271,7 +292,7 @@ class DeviceNodeController extends ChangeNotifier {
 
   void _scheduleReconnect(String reason) {
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 3), () {
+    _reconnectTimer = Timer(_reconnectDelay, () {
       _setInfo('reconnect: $reason');
       unawaited(connect());
     });
@@ -548,7 +569,7 @@ class DeviceNodeController extends ChangeNotifier {
         startSeq: pending.first.seq,
         endSeq: pending.last.seq,
       );
-      _channel?.sink.add(batch.writeToBuffer());
+      _socket?.send(batch.writeToBuffer());
     } catch (e) {
       if (_state.sessionId.isNotEmpty) {
         await _localStore.clearAllInflight(
@@ -645,8 +666,8 @@ class DeviceNodeController extends ChangeNotifier {
 
   Future<void> _pushDeviceStatus() async {
     try {
-      final battery = await _battery.batteryLevel;
-      final storageFreeMb = await _storageInfoService.getFreeStorageMb();
+      final battery = await _batteryLevelProvider();
+      final storageFreeMb = await _storageFreeProvider();
       await _backendClient.patchDeviceStatus(
         config: _config,
         connected: _state.connected,
@@ -664,7 +685,7 @@ class DeviceNodeController extends ChangeNotifier {
 
   void _sendJson(Map<String, dynamic> payload) {
     try {
-      _channel?.sink.add(jsonEncode(payload));
+      _socket?.send(jsonEncode(payload));
     } catch (e) {
       _setInfo('send failed: $e');
     }
