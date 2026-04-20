@@ -22,6 +22,7 @@ PROTO_SCHEMA_VERSION = "1.1.0"
 class DeviceStreamState:
     last_received_seq: int = 0
     last_heartbeat_monotonic: float = field(default_factory=time.monotonic)
+    last_seen_unix_ns: int = field(default_factory=time.time_ns)
     received_batches: int = 0
     duplicate_batches: int = 0
     total_samples: int = 0
@@ -46,6 +47,7 @@ class WsRuntime:
         self._device_session_map: dict[str, str] = {}
         self._clock_sync_pending: dict[tuple[str, str, str], asyncio.Future[dict[str, Any]]] = {}
         self._stop_ack_pending: dict[tuple[str, str, str], asyncio.Future[bool]] = {}
+        self._session_start_countdown_tasks: dict[str, asyncio.Task[None]] = {}
         self._timeout_task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
@@ -71,6 +73,8 @@ class WsRuntime:
             self._clock_sync_pending = {}
             stop_pending = list(self._stop_ack_pending.values())
             self._stop_ack_pending = {}
+            countdown_tasks = list(self._session_start_countdown_tasks.values())
+            self._session_start_countdown_tasks = {}
 
         for future in pending:
             if not future.done():
@@ -79,6 +83,11 @@ class WsRuntime:
         for future in stop_pending:
             if not future.done():
                 future.cancel()
+
+        for task in countdown_tasks:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
         for websocket in devices.values():
             with contextlib.suppress(Exception):
@@ -120,7 +129,9 @@ class WsRuntime:
             old_ws = self._device_connections.get(device_id)
             self._device_connections[device_id] = websocket
             self._device_session_map[device_id] = session_id
-            self._device_states.setdefault((session_id, device_id), DeviceStreamState())
+            state = self._device_states.setdefault((session_id, device_id), DeviceStreamState())
+            state.last_heartbeat_monotonic = time.monotonic()
+            state.last_seen_unix_ns = time.time_ns()
 
         if old_ws is not None and old_ws is not websocket:
             with contextlib.suppress(Exception):
@@ -162,6 +173,7 @@ class WsRuntime:
         async with self._lock:
             state = self._device_states.setdefault((session_id, device_id), DeviceStreamState())
             state.last_heartbeat_monotonic = time.monotonic()
+            state.last_seen_unix_ns = time.time_ns()
 
     async def process_batch(
         self,
@@ -178,6 +190,7 @@ class WsRuntime:
         async with self._lock:
             state = self._device_states.setdefault((session_id, device_id), DeviceStreamState())
             state.last_heartbeat_monotonic = now
+            state.last_seen_unix_ns = time.time_ns()
 
             duplicate = end_seq <= state.last_received_seq if duplicate_override is None else duplicate_override
             if duplicate:
@@ -429,6 +442,76 @@ class WsRuntime:
         future.set_result(True)
         return True
 
+    async def start_session_countdown(
+        self,
+        *,
+        session_id: str,
+        start_at_unix_ns: int,
+        tick_interval_seconds: float = 1.0,
+    ) -> None:
+        await self.stop_session_countdown(session_id)
+        interval = max(0.05, float(tick_interval_seconds))
+        task = asyncio.create_task(
+            self._session_start_countdown_loop(
+                session_id=session_id,
+                start_at_unix_ns=int(start_at_unix_ns),
+                tick_interval_seconds=interval,
+            ),
+            name=f"session-start-countdown-{session_id}",
+        )
+        async with self._lock:
+            self._session_start_countdown_tasks[session_id] = task
+
+    async def stop_session_countdown(self, session_id: str) -> None:
+        async with self._lock:
+            task = self._session_start_countdown_tasks.pop(session_id, None)
+
+        if task is None:
+            return
+
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    async def _session_start_countdown_loop(
+        self,
+        *,
+        session_id: str,
+        start_at_unix_ns: int,
+        tick_interval_seconds: float,
+    ) -> None:
+        try:
+            while True:
+                now_unix_ns = time.time_ns()
+                remaining_ns = max(0, start_at_unix_ns - now_unix_ns)
+                remaining_ms = remaining_ns // 1_000_000
+                remaining_seconds = int((remaining_ms + 999) // 1000)
+                status = "COUNTDOWN" if remaining_ns > 0 else "RUNNING"
+
+                await self.publish_session_event(
+                    session_id,
+                    {
+                        "type": "SESSION_START_COUNTDOWN",
+                        "session_id": session_id,
+                        "status": status,
+                        "start_at_unix_ns": int(start_at_unix_ns),
+                        "server_now_unix_ns": int(now_unix_ns),
+                        "remaining_ms": int(remaining_ms),
+                        "remaining_seconds": int(remaining_seconds),
+                    },
+                )
+
+                if remaining_ns <= 0:
+                    break
+
+                sleep_seconds = min(tick_interval_seconds, remaining_ns / 1_000_000_000)
+                await asyncio.sleep(max(0.05, sleep_seconds))
+        finally:
+            async with self._lock:
+                current = self._session_start_countdown_tasks.get(session_id)
+                if current is asyncio.current_task():
+                    self._session_start_countdown_tasks.pop(session_id, None)
+
     def _encode_control_command(self, payload: dict[str, Any]) -> bytes | None:
         msg_type = str(payload.get("type", "")).upper()
         command_map: dict[str, int] = {
@@ -495,6 +578,12 @@ class WsRuntime:
 
     def publish_warning_sync(self, session_id: str, device_id: str, warning: str) -> Future[Any] | None:
         return self._submit_from_thread(self.publish_warning(session_id, device_id, warning))
+
+    def publish_device_event_sync(self, session_id: str, payload: dict[str, Any]) -> Future[Any] | None:
+        return self._submit_from_thread(self.publish_device_event(session_id, payload))
+
+    def stop_session_countdown_sync(self, session_id: str) -> Future[Any] | None:
+        return self._submit_from_thread(self.stop_session_countdown(session_id))
 
     def _submit_from_thread(self, coroutine: Any) -> Future[Any] | None:
         loop = self._loop
@@ -594,6 +683,7 @@ class WsRuntime:
                         "received_batches": state.received_batches,
                         "duplicate_batches": state.duplicate_batches,
                         "total_samples": state.total_samples,
+                        "last_seen_unix_ns": int(state.last_seen_unix_ns),
                     }
                 )
 
@@ -640,6 +730,7 @@ class WsRuntime:
                         "type": "DEVICE_OFFLINE",
                         "device_id": device_id,
                         "reason": "heartbeat_timeout",
+                        "last_seen_unix_ns": int(time.time_ns()),
                     },
                 )
 
