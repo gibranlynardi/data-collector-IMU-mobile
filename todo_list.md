@@ -735,36 +735,43 @@ Roadmap ini mengikuti arsitektur terbaru:
 
 ## Phase 14: Deployment LAN Laptop
 
-- [ ] Buat Docker Compose untuk laptop:
-  - [ ] backend.
-  - [ ] frontend.
-  - [ ] optional database.
-- [ ] Pastikan webcam access bisa berjalan:
-  - [ ] native backend lebih mudah untuk webcam.
-  - [ ] Docker webcam butuh mapping device khusus, evaluasi dulu.
-- [ ] Buat `.env.example`:
-  - [ ] `BACKEND_HOST`.
-  - [ ] `BACKEND_PORT`.
-  - [ ] `DASHBOARD_PORT`.
-  - [ ] `DATA_ROOT`.
-  - [ ] `WEBCAM_INDEX`.
-  - [ ] `FAMS_HOST`.
-  - [ ] `FAMS_USER`.
-  - [ ] `FAMS_REMOTE_PATH`.
-- [ ] Buat startup script:
-  - [ ] `scripts/start_backend.ps1`.
-  - [ ] `scripts/start_dashboard.ps1`.
-  - [ ] `scripts/start_all.ps1`.
-- [ ] Buat dokumentasi operator:
-  - [ ] cara connect phone ke Wi-Fi LAN.
-  - [ ] cara set backend IP di phone.
-  - [ ] cara preflight.
-  - [ ] cara start/stop session.
-  - [ ] cara membuat annotation.
-  - [ ] cara verify video.
-  - [ ] cara export.
-  - [ ] cara upload ke FAMS.
-  - [ ] cara recovery jika device gagal.
+- [x] Buat Docker Compose untuk laptop:
+  - [x] backend.
+  - [x] frontend.
+  - [x] optional database.
+- [x] Pastikan webcam access bisa berjalan:
+  - [x] native backend lebih mudah untuk webcam.
+  - [x] Docker webcam butuh mapping device khusus, evaluasi dulu.
+- [x] Buat `.env.example`:
+  - [x] `BACKEND_HOST`.
+  - [x] `BACKEND_PORT`.
+  - [x] `DASHBOARD_PORT`.
+  - [x] `DATA_ROOT`.
+  - [x] `WEBCAM_INDEX`.
+  - [x] `FAMS_HOST`.
+  - [x] `FAMS_USER`.
+  - [x] `FAMS_REMOTE_PATH`.
+- [x] Buat startup script:
+  - [x] `scripts/start_backend.ps1`.
+  - [x] `scripts/start_dashboard.ps1`.
+  - [x] `scripts/start_all.ps1`.
+- [x] Buat dokumentasi operator:
+  - [x] cara connect phone ke Wi-Fi LAN.
+  - [x] cara set backend IP di phone.
+  - [x] cara preflight.
+  - [x] cara start/stop session.
+  - [x] cara membuat annotation.
+  - [x] cara verify video.
+  - [x] cara export.
+  - [x] cara upload ke FAMS.
+  - [x] cara recovery jika device gagal.
+
+### Phase 14 Notes
+
+- Docker Compose utama ada di `docker-compose.yml` (service `backend`, `dashboard`, dan `db` profile optional `database`).
+- Startup script native tersedia di `scripts/start_backend.ps1`, `scripts/start_dashboard.ps1`, dan `scripts/start_all.ps1`.
+- Panduan operator ada di `scripts/operator_lan_guide.md`.
+- Untuk kebutuhan webcam hardware, mode native backend tetap paling direkomendasikan.
 
 ---
 
