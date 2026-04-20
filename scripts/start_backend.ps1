@@ -1,5 +1,5 @@
 param(
-    [string]$Host = "0.0.0.0",
+    [string]$BindHost = "0.0.0.0",
     [int]$Port = 8000,
     [switch]$Reload
 )
@@ -42,7 +42,7 @@ if (-not $env:DATA_ROOT) {
     $env:DATA_ROOT = Join-Path $repoRoot "data"
 }
 if (-not $env:BACKEND_HOST) {
-    $env:BACKEND_HOST = $Host
+    $env:BACKEND_HOST = $BindHost
 }
 if (-not $env:BACKEND_REST_PORT) {
     $env:BACKEND_REST_PORT = [string]$Port
@@ -60,6 +60,14 @@ if (Test-Path -Path $pythonLocal) {
         throw "Python tidak ditemukan. Buat venv di .venv atau install Python global."
     }
     $pythonExe = $pythonCmd.Source
+}
+
+if ($env:DATABASE_URL -and $env:DATABASE_URL.StartsWith("postgresql")) {
+    & $pythonExe -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('psycopg2') else 1)" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "DATABASE_URL PostgreSQL terdeteksi, tapi psycopg2 belum tersedia. Fallback ke SQLite lokal."
+        Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
+    }
 }
 
 Push-Location $backendRoot
