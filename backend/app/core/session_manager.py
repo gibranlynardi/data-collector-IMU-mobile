@@ -67,6 +67,14 @@ class SessionManager:
         session = db.get(SessionModel, session_id)
         if not session:
             raise ValueError(SESSION_NOT_FOUND)
+        if session.status == "SYNCING" and incomplete:
+            session.status = "INCOMPLETE_FINALIZED"
+            session.finalized_at = datetime.now(UTC).replace(tzinfo=None)
+            db.commit()
+            db.refresh(session)
+            self._active_sessions.pop(session_id, None)
+            return session
+
         if session.status != "ENDING":
             target = "INCOMPLETE_FINALIZED" if incomplete else "COMPLETED"
             raise SessionStateError(f"invalid transition {session.status} -> {target}")
