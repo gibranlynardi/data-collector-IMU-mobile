@@ -654,33 +654,33 @@ Roadmap ini mengikuti arsitektur terbaru:
 
 ## Phase 12: Manual Upload ke FAMS Server
 
-- [ ] Tetapkan FAMS server target:
-  - [ ] host.
-  - [ ] user.
-  - [ ] destination path.
-  - [ ] SSH key.
-- [ ] Buat script manual upload:
+- [x] Tetapkan FAMS server target:
+  - [x] host.
+  - [x] user.
+  - [x] destination path.
+  - [x] SSH key.
+- [x] Buat script manual upload:
   ```text
   scripts/upload_to_fams.ps1
   scripts/upload_to_fams.sh
   ```
-- [ ] Script upload memakai:
-  - [ ] `rsync`.
-  - [ ] checksum sebelum/sesudah upload.
-  - [ ] resume jika upload gagal, jika memakai `rsync`.
-- [ ] Dashboard tampilkan instruksi upload:
-  - [ ] path export zip.
-  - [ ] command upload.
-  - [ ] checksum file.
-- [ ] Simpan upload metadata:
-  - [ ] uploaded/not uploaded.
-  - [ ] uploaded_at.
-  - [ ] uploaded_by.
-  - [ ] remote_path.
-  - [ ] checksum.
-- [ ] Tambahkan manual confirmation:
-  - [ ] operator klik `Mark as uploaded`.
-  - [ ] backend simpan status archive.
+- [x] Script upload memakai:
+  - [x] `rsync`.
+  - [x] checksum sebelum/sesudah upload.
+  - [x] resume jika upload gagal, jika memakai `rsync`.
+- [x] Dashboard tampilkan instruksi upload:
+  - [x] path export zip.
+  - [x] command upload.
+  - [x] checksum file.
+- [x] Simpan upload metadata:
+  - [x] uploaded/not uploaded.
+  - [x] uploaded_at.
+  - [x] uploaded_by.
+  - [x] remote_path.
+  - [x] checksum.
+- [x] Tambahkan manual confirmation:
+  - [x] operator klik `Mark as uploaded`.
+  - [x] backend simpan status archive.
 
 ---
 
