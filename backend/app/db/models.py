@@ -115,3 +115,17 @@ class FileArtifact(Base):
     size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     checksum: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ArchiveUpload(Base):
+    __tablename__ = "archive_uploads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey(SESSION_FK), unique=True, index=True)
+    uploaded: Mapped[bool] = mapped_column(Boolean, default=False)
+    uploaded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    uploaded_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    remote_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    checksum: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
