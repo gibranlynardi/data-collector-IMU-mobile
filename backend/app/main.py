@@ -16,6 +16,7 @@ from app.db import models  # noqa: F401
 from app.db.migrations import run_internal_migrations
 from app.db.session import engine
 from app.services.csv_writer import csv_writer_service
+from app.services.storage_monitor import storage_monitor_service
 from app.services.video_recorder import video_recorder_service
 from app.services.ws_runtime import ws_runtime
 
@@ -25,7 +26,9 @@ async def lifespan(app: FastAPI):
     run_internal_migrations(engine)
     app.state.preflight_report = run_startup_checks()
     ws_runtime.start()
+    storage_monitor_service.start()
     yield
+    await storage_monitor_service.stop()
     await ws_runtime.stop()
     video_recorder_service.close_all()
     csv_writer_service.close_all()
