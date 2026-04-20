@@ -13,6 +13,7 @@ class SessionCreateRequest(BaseModel):
 
 class SessionFinalizeRequest(BaseModel):
     incomplete: bool = False
+    reason: str | None = None
 
 
 class SessionResponse(BaseModel):
