@@ -10,7 +10,9 @@ class Settings(BaseSettings):
 
     backend_host: str = "0.0.0.0"
     backend_rest_port: int = 8000
-    backend_ws_port: int = 8001
+    backend_ws_port: int = 8000
+    operator_api_token: str = ""
+    device_enrollment_token: str = ""
     cors_allow_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     data_root: Path = Path("./data")
@@ -56,6 +58,8 @@ class Settings(BaseSettings):
     stop_command_ack_timeout_seconds: float = 2.0
     device_storage_critical_mb: int = 512
     battery_critical_percent: float = 10.0
+    preflight_report_ttl_seconds: int = 180
+    preflight_effective_hz_min_ratio: float = 0.8
     storage_runtime_check_interval_seconds: float = 10.0
     storage_runtime_warning_free_bytes: int = 2_000_000_000
     storage_runtime_critical_free_bytes: int = 1_000_000_000
