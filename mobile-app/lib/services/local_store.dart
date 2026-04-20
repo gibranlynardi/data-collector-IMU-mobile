@@ -82,7 +82,7 @@ class LocalStore implements LocalStorePort {
     final dbPath = _databasePathOverride ?? await _resolveDefaultDbPath();
     _db = await openDatabase(
       dbPath,
-      version: 2,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE local_sessions(
@@ -118,6 +118,7 @@ class LocalStore implements LocalStorePort {
         ''');
 
         await db.execute('CREATE INDEX idx_sensor_pending ON sensor_samples(session_id, device_id, uploaded, seq)');
+        await db.execute('CREATE UNIQUE INDEX uq_sensor_seq ON sensor_samples(session_id, device_id, seq)');
 
         await db.execute('''
           CREATE TABLE upload_batches(
@@ -137,6 +138,21 @@ class LocalStore implements LocalStorePort {
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await db.execute('ALTER TABLE sensor_samples ADD COLUMN inflight INTEGER NOT NULL DEFAULT 0');
+        }
+        if (oldVersion < 3) {
+          await db.execute('''
+            DELETE FROM sensor_samples
+            WHERE id IN (
+              SELECT newer.id
+              FROM sensor_samples AS newer
+              JOIN sensor_samples AS older
+                ON newer.session_id = older.session_id
+               AND newer.device_id = older.device_id
+               AND newer.seq = older.seq
+               AND newer.id > older.id
+            )
+          ''');
+          await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_sensor_seq ON sensor_samples(session_id, device_id, seq)');
         }
       },
     );
@@ -241,7 +257,7 @@ class LocalStore implements LocalStorePort {
     final db = await database();
     final nowNs = DateTime.now().microsecondsSinceEpoch * 1000;
 
-    await db.insert('sensor_samples', {
+    final insertedId = await db.insert('sensor_samples', {
       'session_id': sessionId,
       'device_id': deviceId,
       'device_role': deviceRole,
@@ -257,7 +273,11 @@ class LocalStore implements LocalStorePort {
       'inflight': 0,
       'uploaded': 0,
       'created_at_unix_ns': nowNs,
-    });
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+
+    if (insertedId == 0) {
+      return;
+    }
 
     await db.update(
       'local_sessions',
