@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
@@ -7,35 +8,46 @@ import {
   assignSessionDevices,
   createSession,
   deleteAnnotation,
+  fetchArchiveUploadStatus,
   fetchAnnotations,
   fetchArtifacts,
   fetchDevices,
   fetchHealth,
   fetchPreflight,
+  fetchSessionSamplingQualityHistory,
+  fetchSessionCompleteness,
   fetchSession,
   fetchSessionDevices,
   fetchSyncReport,
+  fetchUploadInstructions,
   fetchVideoMetadata,
   fetchVideoStatus,
   finalizeSession,
+  finalizeSessionWithReason,
   getApiBaseUrl,
+  markArchiveUploaded,
   patchAnnotation,
   startAnnotation,
   startSession,
   stopAnnotation,
   stopSession,
+  webcamSnapshotUrl,
 } from "@/lib/api";
 import type {
   AnnotationResponse,
+  ArchiveUploadStatusResponse,
   ArtifactResponse,
   DashboardEvent,
   DeviceResponse,
   HealthResponse,
   PreflightResponse,
+  SessionCompletenessResponse,
   SessionBinding,
   SessionDeviceAssignItem,
+  SamplingQualityPoint,
   SessionResponse,
   SyncReport,
+  UploadInstructionsResponse,
   VideoAnonymizeResponse,
   VideoMetadataResponse,
   VideoStatusResponse,
@@ -52,10 +64,15 @@ type PreviewPoint = {
 };
 
 type DevicePreviewStore = Record<string, PreviewPoint[]>;
+type DeviceSamplingHistoryStore = Record<string, SamplingQualityPoint[]>;
 
 const API_BASE = getApiBaseUrl();
 const WS_BASE_OVERRIDE = process.env.NEXT_PUBLIC_WS_BASE_URL;
+const OPERATOR_WS_TOKEN = process.env.NEXT_PUBLIC_OPERATOR_API_TOKEN ?? "";
+const OPERATOR_WS_ID = process.env.NEXT_PUBLIC_OPERATOR_ID ?? "dashboard-web";
 const PREVIEW_WINDOW_MS = 30_000;
+const SAMPLING_HISTORY_LIMIT = 96;
+const SAMPLING_TARGET_INTERVAL_MS = 10;
 
 function buildWsBase(apiBase: string, wsPort: number | null): string {
   if (WS_BASE_OVERRIDE && WS_BASE_OVERRIDE.trim()) {
@@ -157,6 +174,47 @@ function sparkline(points: number[], width = 280, height = 84): string {
     .join(" ");
 }
 
+function buildSamplingHistoryStore(points: SamplingQualityPoint[]): DeviceSamplingHistoryStore {
+  const bucket: DeviceSamplingHistoryStore = {};
+  for (const point of points) {
+    const key = point.device_id;
+    if (!bucket[key]) {
+      bucket[key] = [];
+    }
+    bucket[key].push(point);
+  }
+  for (const key of Object.keys(bucket)) {
+    bucket[key].sort((a, b) => Date.parse(a.measured_at) - Date.parse(b.measured_at));
+    if (bucket[key].length > SAMPLING_HISTORY_LIMIT) {
+      bucket[key] = bucket[key].slice(-SAMPLING_HISTORY_LIMIT);
+    }
+  }
+  return bucket;
+}
+
+function appendSamplingHistoryPoint(
+  store: DeviceSamplingHistoryStore,
+  point: SamplingQualityPoint,
+): DeviceSamplingHistoryStore {
+  const current = store[point.device_id] ?? [];
+  const next = [...current, point].sort((a, b) => Date.parse(a.measured_at) - Date.parse(b.measured_at));
+  const trimmed = next.length > SAMPLING_HISTORY_LIMIT ? next.slice(-SAMPLING_HISTORY_LIMIT) : next;
+  return { ...store, [point.device_id]: trimmed };
+}
+
+function jitterQualityTone(jitterP99Ms: number | null): { label: string; className: string } {
+  if (jitterP99Ms === null || !Number.isFinite(jitterP99Ms)) {
+    return { label: "unknown", className: "bg-[#ebe3d6] text-[#5e4f3d]" };
+  }
+  if (jitterP99Ms <= 3) {
+    return { label: "stable", className: "bg-[#d4f3df] text-[#245f3b]" };
+  }
+  if (jitterP99Ms <= 6) {
+    return { label: "degrading", className: "bg-[#ffe3ce] text-[#824622]" };
+  }
+  return { label: "critical", className: "bg-[#f7d6cc] text-[#8b3727]" };
+}
+
 export default function Home() {
   const [sessionIdInput, setSessionIdInput] = useState("");
   const [sessionId, setSessionId] = useState("");
@@ -181,14 +239,24 @@ export default function Home() {
   const [anonymizeState, setAnonymizeState] = useState<"idle" | "pending" | "running" | "completed" | "failed">("idle");
   const [anonymizeResult, setAnonymizeResult] = useState<VideoAnonymizeResponse | null>(null);
   const [clockNow, setClockNow] = useState<number>(() => Date.now());
+  const [uploadInstructions, setUploadInstructions] = useState<UploadInstructionsResponse | null>(null);
+  const [archiveUpload, setArchiveUpload] = useState<ArchiveUploadStatusResponse | null>(null);
+  const [uploadedBy, setUploadedBy] = useState("operator");
+  const [remotePathInput, setRemotePathInput] = useState("");
+  const [completeness, setCompleteness] = useState<SessionCompletenessResponse | null>(null);
+  const [showFinalizeIncompleteModal, setShowFinalizeIncompleteModal] = useState(false);
+  const [finalizeIncompleteReason, setFinalizeIncompleteReason] = useState("");
+  const [webcamFrameTick, setWebcamFrameTick] = useState(0);
 
   const [startBarrierUnixNs, setStartBarrierUnixNs] = useState<number | null>(null);
   const [countdownMs, setCountdownMs] = useState<number>(0);
   const [previewByDevice, setPreviewByDevice] = useState<DevicePreviewStore>({});
+  const [samplingHistoryByDevice, setSamplingHistoryByDevice] = useState<DeviceSamplingHistoryStore>({});
 
   const selectedSession = sessionId.trim();
   const activeAnnotations = annotations.filter((item) => !item.ended_at && !item.deleted);
   const wsBase = useMemo(() => buildWsBase(API_BASE, health?.ws_port ?? null), [health?.ws_port]);
+  const webcamSnapshot = useMemo(() => `${webcamSnapshotUrl()}?t=${webcamFrameTick}`, [webcamFrameTick]);
 
   const elapsedSeconds = useMemo(() => {
     if (!session?.started_at) {
@@ -294,6 +362,22 @@ export default function Home() {
     setSyncReport(syncPayload);
     setVideo(videoPayload);
 
+    const [uploadInstructionsPayload, archiveUploadPayload, completenessPayload, samplingQualityPayload] = await Promise.all([
+      fetchUploadInstructions(selectedSession).catch(() => null),
+      fetchArchiveUploadStatus(selectedSession).catch(() => null),
+      fetchSessionCompleteness(selectedSession).catch(() => null),
+      fetchSessionSamplingQualityHistory(selectedSession, { limit: SAMPLING_HISTORY_LIMIT }).catch(() => null),
+    ]);
+    setUploadInstructions(uploadInstructionsPayload);
+    setArchiveUpload(archiveUploadPayload);
+    if (archiveUploadPayload?.remote_path) {
+      setRemotePathInput(archiveUploadPayload.remote_path);
+    } else if (uploadInstructionsPayload?.remote_target) {
+      setRemotePathInput(uploadInstructionsPayload.remote_target);
+    }
+    setCompleteness(completenessPayload);
+    setSamplingHistoryByDevice(buildSamplingHistoryStore(samplingQualityPayload?.points ?? []));
+
     try {
       const metadataPayload = await fetchVideoMetadata(selectedSession);
       setVideoMetadata(metadataPayload);
@@ -390,11 +474,26 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    const timer = globalThis.setInterval(() => {
+      setWebcamFrameTick((prev) => prev + 1);
+    }, 2000);
+    return () => globalThis.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     if (!selectedSession) {
       return;
     }
 
-    const ws = new WebSocket(`${wsBase}/ws/dashboard/${selectedSession}`);
+    const wsQuery = new URLSearchParams();
+    if (OPERATOR_WS_TOKEN) {
+      wsQuery.set("operator_token", OPERATOR_WS_TOKEN);
+    }
+    if (OPERATOR_WS_ID) {
+      wsQuery.set("operator_id", OPERATOR_WS_ID);
+    }
+    const wsSuffix = wsQuery.toString() ? `?${wsQuery.toString()}` : "";
+    const ws = new WebSocket(`${wsBase}/ws/dashboard/${selectedSession}${wsSuffix}`);
     ws.onmessage = (event) => {
       const payload = JSON.parse(event.data) as DashboardEvent;
       if (payload.type === "SESSION_STATE") {
@@ -444,6 +543,33 @@ export default function Home() {
       if (payload.type === "ANNOTATION_EVENT") {
         void reloadSessionData();
       }
+      if (payload.type === "SESSION_COMPLETENESS") {
+        setCompleteness({
+          session_id: selectedSession,
+          complete: Boolean(payload.complete),
+          checks: (payload.checks as Record<string, boolean>) ?? {},
+          detail: (payload.detail as Record<string, unknown>) ?? {},
+        });
+      }
+      if (payload.type === "DEVICE_SAMPLING_QUALITY") {
+        const measuredAt = String(payload.measured_at ?? "").trim();
+        const deviceId = String(payload.device_id ?? "").trim();
+        if (!deviceId || !measuredAt) {
+          return;
+        }
+        const point: SamplingQualityPoint = {
+          device_id: deviceId,
+          connected: Boolean(payload.connected ?? true),
+          recording: Boolean(payload.recording ?? false),
+          battery_percent: typeof payload.battery_percent === "number" ? payload.battery_percent : null,
+          storage_free_mb: typeof payload.storage_free_mb === "number" ? payload.storage_free_mb : null,
+          effective_hz: typeof payload.effective_hz === "number" ? payload.effective_hz : null,
+          interval_p99_ms: typeof payload.interval_p99_ms === "number" ? payload.interval_p99_ms : null,
+          jitter_p99_ms: typeof payload.jitter_p99_ms === "number" ? payload.jitter_p99_ms : null,
+          measured_at: measuredAt,
+        };
+        setSamplingHistoryByDevice((prev) => appendSamplingHistoryPoint(prev, point));
+      }
       const barrier = payload.server_start_time_unix_ns;
       if (typeof barrier === "number" && barrier > 0) {
         setStartBarrierUnixNs(barrier);
@@ -471,6 +597,8 @@ export default function Home() {
     return () => globalThis.clearInterval(timer);
   }, [startBarrierUnixNs]);
 
+  const completenessEntries = Object.entries(completeness?.checks ?? {});
+
   return (
     <div className="min-h-screen bg-[radial-gradient(80%_110%_at_10%_5%,#f4e8ce_0%,#f8f3e6_42%,#efe7d8_100%)] text-[#1e1b16]">
       <main className="mx-auto grid w-full max-w-[1500px] gap-4 px-4 py-4 md:px-6 md:py-6 xl:grid-cols-[1.2fr_1fr]">
@@ -490,7 +618,10 @@ export default function Home() {
               className="col-span-3 rounded-xl border border-black/20 bg-[#fffdfa] px-3 py-2 text-sm"
             />
             <button
-              onClick={() => setSessionId(sessionIdInput.trim())}
+              onClick={() => {
+                setSessionId(sessionIdInput.trim());
+                setSamplingHistoryByDevice({});
+              }}
               className="rounded-xl bg-[#26221b] px-3 py-2 text-sm font-medium text-white"
             >
               Connect Session
@@ -499,6 +630,7 @@ export default function Home() {
               onClick={() => {
                 setSessionId("");
                 setSessionIdInput("");
+                setSamplingHistoryByDevice({});
               }}
               className="rounded-xl border border-black/20 bg-white px-3 py-2 text-sm"
             >
@@ -592,6 +724,16 @@ export default function Home() {
               >
                 Finalize
               </button>
+              <button
+                onClick={() => selectedSession && void runAction("Completeness checked", async () => {
+                  const report = await fetchSessionCompleteness(selectedSession);
+                  setCompleteness(report);
+                  setShowFinalizeIncompleteModal(true);
+                })}
+                className="rounded-xl border border-[#d4b782] bg-[#2a2117] px-3 py-2 text-sm font-medium text-[#f4ecdf]"
+              >
+                Finalize Incomplete
+              </button>
             </div>
           </div>
         </section>
@@ -611,7 +753,7 @@ export default function Home() {
             <ChecklistRow label="Expected sampling 100 Hz" ok={expectedHzOk} detail={allDevicesWithHz ? "all devices >=95Hz" : "hz telemetry incomplete"} />
           </Panel>
 
-          <Panel title="Devices" subtitle="Transport status, battery, storage, effective Hz">
+          <Panel title="Devices" subtitle="Transport status + sampling quality trend (interval/jitter p99)">
             <div className="space-y-2">
               {devices.map((device) => (
                 <div key={device.device_id} className="rounded-xl border border-black/10 bg-[#f8f1e6] p-2 text-xs">
@@ -626,6 +768,47 @@ export default function Home() {
                     <span>Battery {device.battery_percent ?? "-"}%</span>
                     <span>Hz {device.effective_hz?.toFixed(1) ?? "-"}</span>
                   </div>
+                  {(() => {
+                    const trend = samplingHistoryByDevice[device.device_id] ?? [];
+                    const intervalSeries = trend.map((item) => item.interval_p99_ms).filter((item): item is number => typeof item === "number");
+                    const jitterSeries = trend.map((item) => item.jitter_p99_ms).filter((item): item is number => typeof item === "number");
+                    const intervalLine = sparkline(intervalSeries, 240, 40);
+                    const jitterLine = sparkline(jitterSeries, 240, 40);
+                    const latestInterval = trend.at(-1)?.interval_p99_ms ?? device.interval_p99_ms;
+                    const latestJitter = trend.at(-1)?.jitter_p99_ms ?? device.jitter_p99_ms;
+                    const quality = jitterQualityTone(latestJitter ?? null);
+                    return (
+                      <div className="mt-2 rounded-lg border border-black/10 bg-[#fffaf2] p-2">
+                        <div className="mb-1 flex items-center justify-between">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[#5b4a37]">Sampling trend</p>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] ${quality.className}`}>
+                            {quality.label}
+                          </span>
+                        </div>
+                        <div className="grid gap-1 text-[11px] text-[#5f4d39]">
+                          <div className="flex items-center justify-between">
+                            <span>Interval p99</span>
+                            <span>{latestInterval !== null && latestInterval !== undefined ? `${latestInterval.toFixed(2)} ms` : "-"}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Jitter p99</span>
+                            <span>{latestJitter !== null && latestJitter !== undefined ? `${latestJitter.toFixed(2)} ms` : "-"}</span>
+                          </div>
+                        </div>
+                        <svg viewBox="0 0 240 40" className="mt-2 h-10 w-full rounded-md bg-[#1b150f]">
+                          <line x1="0" y1="20" x2="240" y2="20" stroke="#8f7653" strokeDasharray="4 4" strokeWidth="1" opacity="0.4" />
+                          <polyline fill="none" stroke="#f0a36f" strokeWidth="2" points={intervalLine} />
+                        </svg>
+                        <svg viewBox="0 0 240 40" className="mt-1 h-10 w-full rounded-md bg-[#131911]">
+                          <line x1="0" y1="20" x2="240" y2="20" stroke="#6f8b67" strokeDasharray="4 4" strokeWidth="1" opacity="0.4" />
+                          <polyline fill="none" stroke="#8de37a" strokeWidth="2" points={jitterLine} />
+                        </svg>
+                        <p className="mt-1 text-[10px] text-[#6b5842]">
+                          target interval {SAMPLING_TARGET_INTERVAL_MS} ms, history {trend.length} titik
+                        </p>
+                      </div>
+                    );
+                  })()}
                 </div>
               ))}
             </div>
@@ -639,7 +822,18 @@ export default function Home() {
                 <p>Elapsed video: {secondsToClock(videoElapsedSeconds)}</p>
                 <p>Dropped frame estimate: {video?.dropped_frame_estimate ?? 0}</p>
                 <p>Webcam preview: {preflight?.webcam_preview_ok ? "ready sebelum record" : "not ready"}</p>
-                <p className="mt-1 text-xs text-[#6f5a45]">Preview frame live belum diekspos endpoint backend; status preview mengikuti preflight.</p>
+                <Image
+                  src={webcamSnapshot}
+                  alt="Webcam snapshot"
+                  width={640}
+                  height={360}
+                  unoptimized
+                  className="mt-2 h-32 w-full rounded-lg border border-black/10 object-cover"
+                  onError={() => {
+                    setInfo("Webcam snapshot endpoint belum tersedia / kamera tidak bisa dibaca");
+                  }}
+                />
+                <p className="mt-1 text-xs text-[#6f5a45]">Preview menggunakan snapshot JPEG periodik dari backend.</p>
               </div>
               <div className="rounded-xl border border-black/10 bg-[#f8f1e6] p-3">
                 <p>Sync quality: <strong>{syncReport?.overall_sync_quality ?? "unknown"}</strong></p>
@@ -826,15 +1020,116 @@ export default function Home() {
             <div className="mt-3 rounded-xl border border-black/10 bg-[#f8f1e6] p-3 text-xs">
               <p className="font-semibold uppercase tracking-[0.12em]">Upload-to-FAMS instructions/status</p>
               <p className="mt-1">Dataset package: <span className={famsReady ? "text-[#1d6a39]" : "text-[#8b3727]"}>{famsReady ? "ready" : "not-ready"}</span></p>
-              <ol className="mt-2 list-decimal pl-4 text-[#5f4d39]">
-                <li>Pastikan session sudah stop/finalize.</li>
-                <li>Verifikasi `manifest.json`, video, dan `export.zip` exists.</li>
-                <li>Upload file `export/{selectedSession}_dataset.zip` ke FAMS via SSH/SCP.</li>
-                <li>Catat checksum dari manifest untuk audit ingest archive.</li>
-              </ol>
+              {uploadInstructions ? (
+                <div className="mt-2 space-y-2 text-[#5f4d39]">
+                  <p>Local zip: {uploadInstructions.export_zip_path}</p>
+                  <p>Remote target: {uploadInstructions.remote_target}</p>
+                  <p>Checksum SHA-256: <span className="font-mono">{uploadInstructions.checksum_sha256}</span></p>
+                  <div className="rounded-lg border border-black/10 bg-[#fffdf9] p-2">
+                    <p className="font-semibold">PowerShell command</p>
+                    <p className="mt-1 break-all font-mono text-[11px]">{uploadInstructions.command_powershell}</p>
+                  </div>
+                  <div className="rounded-lg border border-black/10 bg-[#fffdf9] p-2">
+                    <p className="font-semibold">Shell command</p>
+                    <p className="mt-1 break-all font-mono text-[11px]">{uploadInstructions.command_shell}</p>
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-2 text-[#8b3727]">Upload instruction belum tersedia (cek export zip).</p>
+              )}
+              <div className="mt-3 rounded-lg border border-black/10 bg-[#fffdf9] p-2">
+                <p className="font-semibold">Archive upload status</p>
+                <p className="mt-1">uploaded: {archiveUpload?.uploaded ? "yes" : "no"}</p>
+                <p>uploaded_at: {archiveUpload?.uploaded_at ?? "-"}</p>
+                <p>uploaded_by: {archiveUpload?.uploaded_by ?? "-"}</p>
+                <p className="break-all">remote_path: {archiveUpload?.remote_path ?? "-"}</p>
+                <p className="break-all">checksum: {archiveUpload?.checksum ?? "-"}</p>
+                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  <input
+                    value={uploadedBy}
+                    onChange={(event) => setUploadedBy(event.target.value)}
+                    placeholder="uploaded by"
+                    className="rounded-lg border border-black/20 px-2 py-1"
+                  />
+                  <input
+                    value={remotePathInput}
+                    onChange={(event) => setRemotePathInput(event.target.value)}
+                    placeholder="remote path"
+                    className="rounded-lg border border-black/20 px-2 py-1"
+                  />
+                </div>
+                <button
+                  onClick={() => selectedSession && uploadInstructions && void runAction("Archive marked as uploaded", async () => {
+                    await markArchiveUploaded(selectedSession, {
+                      uploaded_by: uploadedBy.trim() || "operator",
+                      remote_path: remotePathInput.trim() || uploadInstructions.remote_target,
+                      checksum: uploadInstructions.checksum_sha256,
+                    });
+                    await reloadSessionData();
+                  })}
+                  className="mt-2 rounded-lg bg-[#1e1a13] px-3 py-1.5 text-white"
+                  disabled={!selectedSession || !uploadInstructions}
+                >
+                  Mark as uploaded
+                </button>
+              </div>
             </div>
           </Panel>
         </section>
+
+        {showFinalizeIncompleteModal ? (
+          <section className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+            <div className="w-full max-w-2xl rounded-2xl border border-black/20 bg-white p-4 shadow-2xl">
+              <h3 className="font-display text-sm uppercase tracking-[0.2em] text-[#755f46]">Finalize Incomplete</h3>
+              <p className="mt-1 text-sm text-[#5f4d39]">Review completeness report lalu isi alasan wajib sebelum confirm.</p>
+              <div className="mt-3 max-h-64 space-y-1 overflow-auto rounded-lg border border-black/10 bg-[#f8f1e6] p-2 text-xs">
+                <p className="font-semibold">Overall: {completeness?.complete ? "COMPLETE" : "INCOMPLETE"}</p>
+                {completenessEntries.length === 0 ? <p>Tidak ada detail checks.</p> : null}
+                {completenessEntries.map(([name, passed]) => (
+                  <div key={name} className="flex items-center justify-between rounded-md bg-[#fffdf9] px-2 py-1">
+                    <span>{name}</span>
+                    <span className={passed ? "text-[#245f3b]" : "text-[#8b3727]"}>{passed ? "OK" : "FAIL"}</span>
+                  </div>
+                ))}
+                {completeness?.detail ? (
+                  <pre className="mt-2 overflow-auto rounded-md bg-[#1e1a13] p-2 text-[11px] text-[#f4ecdf]">{JSON.stringify(completeness.detail, null, 2)}</pre>
+                ) : null}
+              </div>
+              <textarea
+                value={finalizeIncompleteReason}
+                onChange={(event) => setFinalizeIncompleteReason(event.target.value)}
+                placeholder="Reason wajib diisi"
+                className="mt-3 h-24 w-full rounded-lg border border-black/20 px-3 py-2 text-sm"
+              />
+              <div className="mt-3 flex items-center justify-end gap-2">
+                <button
+                  onClick={() => {
+                    setShowFinalizeIncompleteModal(false);
+                    setFinalizeIncompleteReason("");
+                  }}
+                  className="rounded-lg border border-black/20 px-3 py-1.5"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => selectedSession && void runAction("Session finalized incomplete", async () => {
+                    await finalizeSessionWithReason(selectedSession, finalizeIncompleteReason.trim());
+                    if (anonymizeMode) {
+                      await runAnonymize(selectedSession);
+                    }
+                    setShowFinalizeIncompleteModal(false);
+                    setFinalizeIncompleteReason("");
+                    await reloadSessionData();
+                  })}
+                  disabled={!finalizeIncompleteReason.trim()}
+                  className="rounded-lg bg-[#8b3727] px-3 py-1.5 text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Confirm Finalize Incomplete
+                </button>
+              </div>
+            </div>
+          </section>
+        ) : null}
       </main>
     </div>
   );
