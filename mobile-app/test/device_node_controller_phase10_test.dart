@@ -114,6 +114,12 @@ class _InMemoryStore implements LocalStorePort {
   String? recoveredSessionId;
   int _autoId = 1;
 
+  List<int> debugSeqs({required String sessionId, required String deviceId}) {
+    final seqs = _samples.where((s) => s.sessionId == sessionId && s.deviceId == deviceId).map((s) => s.seq).toList();
+    seqs.sort();
+    return seqs;
+  }
+
   @override
   Future<void> clearAllInflight({required String sessionId, required String deviceId}) async {
     for (final sample in _samples) {
@@ -295,6 +301,99 @@ void main() {
     final batch = SensorBatch.fromBuffer(bytes);
     expect(batch.samples.length, greaterThanOrEqualTo(1));
     expect(batch.endSeq.toInt(), greaterThanOrEqualTo(2));
+
+    await controller.disposeController();
+  });
+
+  test('seq tetap monotonic saat sampling berlangsung', () async {
+    final config = NodeConfig.defaults().copyWith(
+      backendBaseUrl: 'http://127.0.0.1:8000',
+      deviceId: 'DEVICE-CHEST-001',
+      deviceRole: 'chest',
+      sessionId: '20260419_143022_A1B2C3D4',
+      wsPort: 8000,
+    );
+
+    final store = _InMemoryStore()..recoveredSessionId = config.sessionId;
+    final sampler = _FakeSampler();
+    final socket = _FakeSocket();
+    final controller = DeviceNodeController(
+      configStore: _FakeConfigStore(config),
+      localStore: store,
+      backendClient: _FakeBackendClient(),
+      sensorSampler: sampler,
+      socketClient: _FakeSocketClient([socket]),
+      connectivityChanges: () => const Stream<List<ConnectivityResult>>.empty(),
+      batteryLevelProvider: () async => 80,
+      storageFreeProvider: () async => 1024,
+      reconnectDelay: const Duration(milliseconds: 50),
+      heartbeatInterval: const Duration(milliseconds: 200),
+      uploaderInterval: const Duration(milliseconds: 200),
+      statusInterval: const Duration(seconds: 10),
+    );
+
+    await controller.initialize();
+    await controller.connect();
+    await socket.serverSend(jsonEncode({'type': 'HELLO_ACK', 'session_id': config.sessionId, 'backend_last_seq': 0}));
+    await socket.serverSend(jsonEncode({'type': 'START_SESSION', 'session_id': config.sessionId, 'target_sampling_hz': 100}));
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(sampler.isRunning, isTrue);
+
+    sampler.emit(const SampleFrame(timestampDeviceUnixNs: 1, elapsedMs: 1, accXG: 0.1, accYG: 0.2, accZG: 0.3, gyroXDeg: 1, gyroYDeg: 2, gyroZDeg: 3));
+    sampler.emit(const SampleFrame(timestampDeviceUnixNs: 2, elapsedMs: 2, accXG: 0.1, accYG: 0.2, accZG: 0.3, gyroXDeg: 1, gyroYDeg: 2, gyroZDeg: 3));
+    sampler.emit(const SampleFrame(timestampDeviceUnixNs: 3, elapsedMs: 3, accXG: 0.1, accYG: 0.2, accZG: 0.3, gyroXDeg: 1, gyroYDeg: 2, gyroZDeg: 3));
+
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    final seqs = store.debugSeqs(sessionId: config.sessionId, deviceId: config.deviceId);
+    expect(seqs, equals(<int>[1, 2, 3]));
+    expect(controller.state.lastSeq, 3);
+
+    await controller.disposeController();
+  });
+
+  test('command handling start dan stop menghasilkan stop ack', () async {
+    final config = NodeConfig.defaults().copyWith(
+      backendBaseUrl: 'http://127.0.0.1:8000',
+      deviceId: 'DEVICE-CHEST-001',
+      deviceRole: 'chest',
+      sessionId: '20260419_143022_A1B2C3D4',
+      wsPort: 8000,
+    );
+
+    final store = _InMemoryStore()..recoveredSessionId = config.sessionId;
+    final sampler = _FakeSampler();
+    final socket = _FakeSocket();
+    final controller = DeviceNodeController(
+      configStore: _FakeConfigStore(config),
+      localStore: store,
+      backendClient: _FakeBackendClient(),
+      sensorSampler: sampler,
+      socketClient: _FakeSocketClient([socket]),
+      connectivityChanges: () => const Stream<List<ConnectivityResult>>.empty(),
+      batteryLevelProvider: () async => 80,
+      storageFreeProvider: () async => 1024,
+      reconnectDelay: const Duration(milliseconds: 50),
+      heartbeatInterval: const Duration(milliseconds: 200),
+      uploaderInterval: const Duration(milliseconds: 50),
+      statusInterval: const Duration(seconds: 10),
+    );
+
+    await controller.initialize();
+    await controller.connect();
+    await socket.serverSend(jsonEncode({'type': 'HELLO_ACK', 'session_id': config.sessionId, 'backend_last_seq': 0}));
+
+    await socket.serverSend(jsonEncode({'type': 'START_SESSION', 'session_id': config.sessionId, 'target_sampling_hz': 100}));
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(controller.state.recording, isTrue);
+
+    await socket.serverSend(jsonEncode({'type': 'STOP_SESSION', 'session_id': config.sessionId, 'command_id': 'stop-123'}));
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    expect(controller.state.recording, isFalse);
+
+    final stopAckRaw = socket.sent.whereType<String>().map((it) => jsonDecode(it) as Map<String, dynamic>).where((it) => it['type'] == 'STOP_SESSION_ACK').toList();
+    expect(stopAckRaw, isNotEmpty);
+    expect(stopAckRaw.last['command_id'], 'stop-123');
 
     await controller.disposeController();
   });
