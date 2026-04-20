@@ -5,6 +5,7 @@ from sqlalchemy.orm import sessionmaker
 import app.api.routers.devices as devices_router
 import app.db.session as db_session
 import app.main as main_app
+import app.services.storage_monitor as storage_monitor_module
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.models import Device, Session as SessionModel, SessionDevice
@@ -25,6 +26,7 @@ def test_patch_device_emits_critical_storage_and_battery_alerts(tmp_path, monkey
     db_session.engine = engine
     db_session.SessionLocal = testing_session_local
     main_app.engine = engine
+    storage_monitor_module.SessionLocal = testing_session_local
     Base.metadata.create_all(bind=engine)
 
     session_id = "20260419_143022_A1B2C3D4"
