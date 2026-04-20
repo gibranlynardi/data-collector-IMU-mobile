@@ -1,0 +1,66 @@
+name: imu-collector
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: imu-backend
+    restart: unless-stopped
+    environment:
+      BACKEND_HOST: 0.0.0.0
+      BACKEND_REST_PORT: 8000
+      BACKEND_WS_PORT: ${BACKEND_PORT:-8000}
+      DATA_ROOT: /data
+      CORS_ALLOW_ORIGINS: http://localhost:${DASHBOARD_PORT:-3000},http://127.0.0.1:${DASHBOARD_PORT:-3000}
+      DATABASE_URL: ${DATABASE_URL:-}
+      WEBCAM_INDEX: ${WEBCAM_INDEX:-0}
+      WEBCAM_PATH: ${WEBCAM_PATH:-}
+      FAMS_HOST: ${FAMS_HOST:-}
+      FAMS_USER: ${FAMS_USER:-}
+      FAMS_REMOTE_PATH: ${FAMS_REMOTE_PATH:-/data/fams/archive}
+      FAMS_SSH_KEY_PATH: ${FAMS_SSH_KEY_PATH:-}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false
+
+  dashboard:
+    build:
+      context: ./web-dashboard
+      dockerfile: Dockerfile
+    container_name: imu-dashboard
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:${BACKEND_PORT:-8000}
+      NEXT_PUBLIC_WS_BASE_URL: ws://localhost:${BACKEND_PORT:-8000}
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    depends_on:
+      - backend
+
+  db:
+    image: postgres:16-alpine
+    container_name: imu-db
+    restart: unless-stopped
+    profiles: ["database"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-imu_collector}
+      POSTGRES_USER: ${POSTGRES_USER:-imu_collector}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-imu_collector}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-imu_collector} -d ${POSTGRES_DB:-imu_collector}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pg_data:
