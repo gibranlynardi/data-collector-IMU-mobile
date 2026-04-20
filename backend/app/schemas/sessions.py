@@ -55,3 +55,20 @@ class SessionDeviceAssignmentResponse(BaseModel):
     session_id: SessionId
     required_roles: list[DeviceRole]
     bindings: list[SessionDeviceBindingResponse]
+
+
+class SamplingQualityPoint(BaseModel):
+    device_id: DeviceId
+    connected: bool
+    recording: bool
+    battery_percent: float | None
+    storage_free_mb: int | None
+    effective_hz: float | None
+    interval_p99_ms: float | None
+    jitter_p99_ms: float | None
+    measured_at: datetime
+
+
+class SessionSamplingQualityHistoryResponse(BaseModel):
+    session_id: SessionId
+    points: list[SamplingQualityPoint]
