@@ -64,6 +64,13 @@ class Settings(BaseSettings):
     session_finalize_max_missing_gap_size: int = 50
     session_finalize_require_video: bool = True
 
+    fams_host: str = ""
+    fams_user: str = ""
+    fams_remote_path: str = ""
+    fams_ssh_key_path: str = ""
+    rsync_executable: str = "rsync"
+    ssh_executable: str = "ssh"
+
     required_device_roles: str = Field(default="chest,waist,thigh")
 
     @property
