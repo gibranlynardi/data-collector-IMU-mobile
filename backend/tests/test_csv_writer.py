@@ -15,6 +15,7 @@ from app.db.base import Base
 from app.db.models import Device, Session as SessionModel, SessionDevice
 from app.services.clock_sync import clock_sync_service
 from app.services.csv_writer import CsvWriterService, SensorSampleRow, csv_writer_service
+from app.services import storage_monitor
 from generated.sensor_sample_pb2 import SensorBatch
 
 
@@ -73,6 +74,7 @@ def test_csv_writer_dedup_gap_state_summary(tmp_path: Path, monkeypatch) -> None
     db_session.engine = engine
     db_session.SessionLocal = testing_session_local
     main_app.engine = engine
+    storage_monitor.SessionLocal = testing_session_local
 
     Base.metadata.create_all(bind=engine)
 
