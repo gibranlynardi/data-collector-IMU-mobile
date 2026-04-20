@@ -5,19 +5,81 @@ import 'package:sqflite/sqflite.dart';
 import '../models/pending_sample.dart';
 import '../models/sample_frame.dart';
 
-class LocalStore {
-  LocalStore._();
+abstract class LocalStorePort {
+  Future<String?> latestUnfinishedSessionId();
+  Future<int> pendingCount({required String sessionId, required String deviceId});
+  Future<int> totalSampleCount({required String sessionId, required String deviceId});
+  Future<int> getLastSeq(String sessionId, String deviceId);
+  Future<void> upsertSession({
+    required String sessionId,
+    required String status,
+    int? serverStartUnixNs,
+    int? monotonicStartMs,
+    int? stoppedAtUnixNs,
+  });
+  Future<void> updateSessionStatus(String sessionId, String status, {int? stoppedAtUnixNs});
+  Future<void> updateSessionStartMarkers({
+    required String sessionId,
+    int? serverStartUnixNs,
+    int? monotonicStartMs,
+  });
+  Future<void> insertSample({
+    required String sessionId,
+    required String deviceId,
+    required String deviceRole,
+    required int seq,
+    required SampleFrame frame,
+  });
+  Future<List<PendingSample>> fetchPendingSamples({
+    required String sessionId,
+    required String deviceId,
+    int limit,
+  });
+  Future<void> markInflightRange({
+    required String sessionId,
+    required String deviceId,
+    required int startSeq,
+    required int endSeq,
+  });
+  Future<void> clearAllInflight({required String sessionId, required String deviceId});
+  Future<void> markUploadedThroughSeq({
+    required String sessionId,
+    required String deviceId,
+    required int lastReceivedSeq,
+  });
+  Future<void> resetUploadFlagsAfterSeq({
+    required String sessionId,
+    required String deviceId,
+    required int backendLastSeq,
+  });
+  Future<void> insertUploadBatch({
+    required String sessionId,
+    required String deviceId,
+    required int startSeq,
+    required int endSeq,
+    required int sampleCount,
+    required String status,
+    String? lastError,
+  });
+}
+
+class LocalStore implements LocalStorePort {
+  LocalStore._({String? databasePathOverride}) : _databasePathOverride = databasePathOverride;
 
   static final LocalStore instance = LocalStore._();
 
+  factory LocalStore.forTest({required String dbPath}) {
+    return LocalStore._(databasePathOverride: dbPath);
+  }
+
   Database? _db;
+  final String? _databasePathOverride;
 
   Future<Database> database() async {
     if (_db != null) {
       return _db!;
     }
-    final docsDir = await getApplicationDocumentsDirectory();
-    final dbPath = p.join(docsDir.path, 'imu_node.db');
+    final dbPath = _databasePathOverride ?? await _resolveDefaultDbPath();
     _db = await openDatabase(
       dbPath,
       version: 2,
@@ -79,6 +141,11 @@ class LocalStore {
       },
     );
     return _db!;
+  }
+
+  Future<String> _resolveDefaultDbPath() async {
+    final docsDir = await getApplicationDocumentsDirectory();
+    return p.join(docsDir.path, 'imu_node.db');
   }
 
   Future<void> upsertSession({
