@@ -12,7 +12,7 @@ import app.db.session as db_session
 import app.main as main_app
 from app.core.config import get_settings
 from app.db.base import Base
-from app.db.models import Device, Session as SessionModel, SessionDevice
+from app.db.models import Annotation, Device, Session as SessionModel, SessionDevice
 from app.services.csv_writer import csv_writer_service
 from app.services.ws_runtime import ws_runtime
 from generated.sensor_sample_pb2 import SensorBatch
@@ -272,10 +272,9 @@ def test_ws_timeout_publishes_device_offline_event(client: TestClient, seeded_de
 
     try:
         with client.websocket_connect(f"/ws/dashboard/{session_id}") as dashboard_ws:
-            snapshot = dashboard_ws.receive_json()
-            status_event = dashboard_ws.receive_json()
-            assert snapshot["type"] == "DASHBOARD_SNAPSHOT"
-            assert status_event["type"] == "VIDEO_RECORDER_STATUS"
+            bootstrap_events = [dashboard_ws.receive_json() for _ in range(4)]
+            assert any(event["type"] == "DASHBOARD_SNAPSHOT" for event in bootstrap_events)
+            assert any(event["type"] == "VIDEO_RECORDER_STATUS" for event in bootstrap_events)
 
             with client.websocket_connect(f"/ws/device/{device_id}") as device_ws:
                 device_ws.send_text(_hello_payload(session_id, device_id))
@@ -290,5 +289,36 @@ def test_ws_timeout_publishes_device_offline_event(client: TestClient, seeded_de
                 assert offline_event["type"] == "DEVICE_OFFLINE"
                 assert offline_event["device_id"] == device_id
                 assert offline_event["reason"] == "heartbeat_timeout"
+                assert int(offline_event["last_seen_unix_ns"]) > 0
     finally:
         ws_runtime._settings.ws_device_timeout_seconds = previous_timeout
+
+
+def test_dashboard_reconnect_gets_session_state_and_active_annotations(client: TestClient, session_factory: sessionmaker) -> None:
+    session_id = "20260419_143022_A1B2C3D4"
+    device_id = "DEVICE-CHEST-001"
+
+    with session_factory() as db:
+        db.add(Device(device_id=device_id, device_role="chest", connected=False))
+        db.add(SessionModel(session_id=session_id, status="RUNNING", preflight_passed=True))
+        db.add(SessionDevice(session_id=session_id, device_id=device_id, required=True))
+        db.add(
+            Annotation(
+                annotation_id=f"ANN-{session_id}-0001",
+                session_id=session_id,
+                label="adl.walk.normal",
+            )
+        )
+        db.commit()
+
+    with client.websocket_connect(f"/ws/dashboard/{session_id}") as dashboard_ws:
+        received = [dashboard_ws.receive_json() for _ in range(4)]
+        event_types = {event["type"] for event in received}
+        assert "DASHBOARD_SNAPSHOT" in event_types
+        assert "SESSION_STATE" in event_types
+        assert "ANNOTATIONS_SNAPSHOT" in event_types
+        assert "VIDEO_RECORDER_STATUS" in event_types
+
+        annotation_snapshot = next(event for event in received if event["type"] == "ANNOTATIONS_SNAPSHOT")
+        assert len(annotation_snapshot["active_annotations"]) == 1
+        assert annotation_snapshot["active_annotations"][0]["annotation_id"] == f"ANN-{session_id}-0001"
