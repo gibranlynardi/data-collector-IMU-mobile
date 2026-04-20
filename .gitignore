@@ -70,4 +70,4 @@ __pycache__/
 # Jangan ignore package-lock.json kalau pakai npm!
 # (biasanya tetap di-commit)
 
-**todo_list.md
+/todo_list.md
