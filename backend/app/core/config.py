@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     clock_sync_warn_latency_ms: float = 120.0
     clock_sync_block_on_bad: bool = True
     stop_command_ack_timeout_seconds: float = 2.0
+    device_storage_critical_mb: int = 512
+    battery_critical_percent: float = 10.0
+    storage_runtime_check_interval_seconds: float = 10.0
+    storage_runtime_warning_free_bytes: int = 2_000_000_000
+    storage_runtime_critical_free_bytes: int = 1_000_000_000
+    storage_runtime_auto_safe_stop_on_critical: bool = True
 
     required_device_roles: str = Field(default="chest,waist,thigh")
 
