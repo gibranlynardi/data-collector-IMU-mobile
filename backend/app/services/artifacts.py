@@ -167,6 +167,17 @@ def materialize_session_storage(db: Session, session_id: str) -> None:
             for item in checks
         ],
     }
+    latest_overall = next((item for item in reversed(checks) if item.check_name == "preflight_overall"), None)
+    if latest_overall and latest_overall.details:
+        try:
+            parsed = json.loads(latest_overall.details)
+            if isinstance(parsed, dict):
+                preflight_payload["latest_report"] = parsed
+        except Exception:
+            preflight_payload["latest_report"] = {
+                "passed": bool(latest_overall.passed),
+                "details": latest_overall.details,
+            }
     _atomic_write_json(session_root / "preflight_report.json", preflight_payload)
 
     # Ensure mandatory log placeholders exist in session logs directory.
