@@ -28,8 +28,8 @@ jobs:
       
       - name: Create local.properties
         run: |
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
-          echo "flutter.sdk=$FLUTTER_ROOT" >> local.properties
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "flutter.sdk=$(dirname $(dirname $(which flutter)))" >> local.properties
         working-directory: mobile-app/android
 
       - name: Clean and Build
