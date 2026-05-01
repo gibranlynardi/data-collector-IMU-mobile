@@ -28,12 +28,14 @@ jobs:
 
       - name: Install Dependencies
         run: flutter pub get
+        working-directory: mobile-app
 
       - name: Build APK (Release)
         run: flutter build apk --release
+        working-directory: mobile-app
 
       - name: Upload APK to GitHub Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: sensor-logger-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: mobile-app/build/app/outputs/flutter-apk/app-release.apk
