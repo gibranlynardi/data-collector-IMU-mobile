@@ -99,6 +99,30 @@ class VideoRecorderService:
                 "webcam_detail": f"opencv unavailable or camera check failed: {exc}",
             }
 
+    def capture_webcam_snapshot_jpeg(self) -> bytes:
+        settings = self._settings
+        source = settings.webcam_path if settings.webcam_path else settings.webcam_index
+        cv2 = self._import_cv2()
+
+        cap = cv2.VideoCapture(source)
+        if not cap.isOpened():
+            raise RuntimeError(f"camera source {source} cannot be opened")
+
+        try:
+            ok, frame = cap.read()
+        finally:
+            with suppress(Exception):
+                cap.release()
+
+        if not ok:
+            raise RuntimeError("camera opened but no frame captured")
+
+        encoded_ok, encoded = cv2.imencode(".jpg", frame)
+        if not encoded_ok:
+            raise RuntimeError("failed to encode JPEG frame")
+
+        return bytes(encoded.tobytes())
+
     def run_test_mode(self, duration_seconds: int = 10) -> dict[str, Any]:
         settings = self._settings
         duration_seconds = max(1, int(duration_seconds))

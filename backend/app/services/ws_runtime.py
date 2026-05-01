@@ -140,6 +140,17 @@ class WsRuntime:
             with contextlib.suppress(Exception):
                 await old_ws.close(code=1000)
 
+    async def bind_devices_to_session(self, session_id: str, device_ids: list[str]) -> list[str]:
+        bound: list[str] = []
+        async with self._lock:
+            for device_id in sorted(set(device_ids)):
+                if self._device_connections.get(device_id) is None:
+                    continue
+                self._device_session_map[device_id] = session_id
+                self._device_states.setdefault((session_id, device_id), DeviceStreamState())
+                bound.append(device_id)
+        return bound
+
     async def unregister_device(self, device_id: str, websocket: WebSocket) -> None:
         removed = False
         session_id = None

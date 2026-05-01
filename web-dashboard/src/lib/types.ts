@@ -38,6 +38,8 @@ export type DeviceResponse = {
   battery_percent: number | null;
   storage_free_mb: number | null;
   effective_hz: number | null;
+  interval_p99_ms: number | null;
+  jitter_p99_ms: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -153,4 +155,46 @@ export type SyncReport = {
 export type DashboardEvent = {
   type: string;
   [key: string]: unknown;
+};
+
+export type UploadInstructionsResponse = {
+  session_id: string;
+  export_zip_path: string;
+  checksum_sha256: string;
+  remote_target: string;
+  command_powershell: string;
+  command_shell: string;
+};
+
+export type ArchiveUploadStatusResponse = {
+  session_id: string;
+  uploaded: boolean;
+  uploaded_at: string | null;
+  uploaded_by: string | null;
+  remote_path: string | null;
+  checksum: string | null;
+};
+
+export type SessionCompletenessResponse = {
+  session_id: string;
+  complete: boolean;
+  checks: Record<string, boolean>;
+  detail: Record<string, unknown>;
+};
+
+export type SamplingQualityPoint = {
+  device_id: string;
+  connected: boolean;
+  recording: boolean;
+  battery_percent: number | null;
+  storage_free_mb: number | null;
+  effective_hz: number | null;
+  interval_p99_ms: number | null;
+  jitter_p99_ms: number | null;
+  measured_at: string;
+};
+
+export type SessionSamplingQualityHistoryResponse = {
+  session_id: string;
+  points: SamplingQualityPoint[];
 };

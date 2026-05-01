@@ -6,6 +6,7 @@ class NodeConfig {
     required this.deviceRole,
     required this.displayName,
     required this.sessionId,
+    this.enrollmentToken = '',
   });
 
   final String backendBaseUrl;
@@ -14,6 +15,7 @@ class NodeConfig {
   final String deviceRole;
   final String displayName;
   final String sessionId;
+  final String enrollmentToken;
 
   NodeConfig copyWith({
     String? backendBaseUrl,
@@ -22,6 +24,7 @@ class NodeConfig {
     String? deviceRole,
     String? displayName,
     String? sessionId,
+    String? enrollmentToken,
   }) {
     return NodeConfig(
       backendBaseUrl: backendBaseUrl ?? this.backendBaseUrl,
@@ -30,6 +33,7 @@ class NodeConfig {
       deviceRole: deviceRole ?? this.deviceRole,
       displayName: displayName ?? this.displayName,
       sessionId: sessionId ?? this.sessionId,
+      enrollmentToken: enrollmentToken ?? this.enrollmentToken,
     );
   }
 
@@ -41,6 +45,7 @@ class NodeConfig {
       'deviceRole': deviceRole,
       'displayName': displayName,
       'sessionId': sessionId,
+      'enrollmentToken': enrollmentToken,
     };
   }
 
@@ -52,6 +57,7 @@ class NodeConfig {
       deviceRole: (json['deviceRole'] as String? ?? 'other').trim().toLowerCase(),
       displayName: (json['displayName'] as String? ?? 'IMU Mobile Node').trim(),
       sessionId: (json['sessionId'] as String? ?? '').trim().toUpperCase(),
+      enrollmentToken: (json['enrollmentToken'] as String? ?? const String.fromEnvironment('DEVICE_ENROLLMENT_TOKEN')).trim(),
     );
   }
 
@@ -63,6 +69,7 @@ class NodeConfig {
       deviceRole: 'other',
       displayName: 'IMU Mobile Node',
       sessionId: '',
+      enrollmentToken: String.fromEnvironment('DEVICE_ENROLLMENT_TOKEN'),
     );
   }
 }

@@ -22,6 +22,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   late final TextEditingController _deviceRoleController;
   late final TextEditingController _displayNameController;
   late final TextEditingController _sessionIdController;
+  late final TextEditingController _enrollmentTokenController;
 
   @override
   void initState() {
@@ -39,6 +40,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _deviceRoleController = TextEditingController();
     _displayNameController = TextEditingController();
     _sessionIdController = TextEditingController();
+    _enrollmentTokenController = TextEditingController();
 
     _controller.initialize().then((_) {
       final config = _controller.config;
@@ -48,6 +50,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _deviceRoleController.text = config.deviceRole;
       _displayNameController.text = config.displayName;
       _sessionIdController.text = config.sessionId;
+      _enrollmentTokenController.text = config.enrollmentToken;
       if (mounted) {
         setState(() {});
       }
@@ -65,6 +68,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _deviceRoleController.dispose();
     _displayNameController.dispose();
     _sessionIdController.dispose();
+    _enrollmentTokenController.dispose();
     super.dispose();
   }
 
@@ -77,6 +81,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       deviceRole: _deviceRoleController.text.trim().toLowerCase(),
       displayName: _displayNameController.text.trim(),
       sessionId: _sessionIdController.text.trim().toUpperCase(),
+      enrollmentToken: _enrollmentTokenController.text.trim(),
     );
     await _controller.saveConfig(nextConfig);
     if (!mounted) {
@@ -114,6 +119,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     _textField('Display Name', _displayNameController),
                     const SizedBox(height: 8),
                     _textField('Session ID aktif', _sessionIdController),
+                    const SizedBox(height: 8),
+                    _textField('Device Enrollment Token', _enrollmentTokenController),
                     const SizedBox(height: 12),
                     Row(
                       children: [
@@ -139,6 +146,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ),
                       ],
                     ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: () async {
+                          await _controller.openBatteryOptimizationSettings();
+                        },
+                        child: const Text('Battery Optimization Settings'),
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 10),
@@ -152,6 +169,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     _statusRow('Local Samples', state.localSamples.toString()),
                     _statusRow('Pending Upload', state.pendingSamples.toString()),
                     _statusRow('Effective Hz', state.effectiveHz.toStringAsFixed(1)),
+                    _statusRow('Interval p99 (ms)', state.intervalP99Ms.toStringAsFixed(2)),
+                    _statusRow('Jitter p99 (ms)', state.jitterP99Ms.toStringAsFixed(2)),
+                    _statusRow('Foreground Guard', state.foregroundGuardActive ? 'active' : 'inactive'),
+                    _statusRow(
+                      'Battery Optimization',
+                      state.batteryOptimizationIgnored ? 'ignored (good)' : 'enabled (risk background drop)',
+                    ),
                     _statusRow('Battery', state.batteryPercent == null ? '-' : '${state.batteryPercent}%'),
                     _statusRow('Storage Free', state.storageFreeMb == null ? '-' : '${state.storageFreeMb} MB'),
                     _statusRow('Info', state.lastInfo),
@@ -163,9 +187,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   children: const [
                     Text('1. Isi Session ID yang valid (format backend) sebelum connect.'),
                     SizedBox(height: 4),
-                    Text('2. Saat backend kirim START_SESSION, app otomatis sampling 100 Hz, simpan lokal, dan upload batch protobuf.'),
+                    Text('2. Saat backend kirim START_SESSION, app aktifkan wakelock + foreground mode untuk menjaga sampling di background.'),
                     SizedBox(height: 4),
-                    Text('3. Jika network putus, sample tetap disimpan lokal dan dikirim ulang saat reconnect.'),
+                    Text('3. Nonaktifkan battery optimization untuk app ini agar 100 Hz lebih stabil di field.'),
+                    SizedBox(height: 4),
+                    Text('4. Pantau Effective Hz, Interval p99, dan Jitter p99 selama sesi; jika jitter naik, hindari screen sleep agresif.'),
+                    SizedBox(height: 4),
+                    Text('5. Jika network putus, sample tetap disimpan lokal dan dikirim ulang saat reconnect.'),
                   ],
                 ),
               ],

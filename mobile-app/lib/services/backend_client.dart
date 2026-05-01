@@ -13,6 +13,8 @@ abstract class BackendClientPort {
     double? batteryPercent,
     int? storageFreeMb,
     double? effectiveHz,
+    double? intervalP99Ms,
+    double? jitterP99Ms,
   });
   void close();
 }
@@ -26,7 +28,11 @@ class BackendClient implements BackendClientPort {
     final uri = Uri.parse('${config.backendBaseUrl}/devices/register');
     final response = await _client.post(
       uri,
-      headers: {'Content-Type': 'application/json'},
+      headers: {
+        'Content-Type': 'application/json',
+        if (config.enrollmentToken.trim().isNotEmpty) 'X-Device-Enrollment-Token': config.enrollmentToken.trim(),
+        if (config.deviceId.trim().isNotEmpty) 'X-Device-Id': config.deviceId.trim(),
+      },
       body: jsonEncode({
         'device_id': config.deviceId,
         'device_role': config.deviceRole,
@@ -46,17 +52,25 @@ class BackendClient implements BackendClientPort {
     double? batteryPercent,
     int? storageFreeMb,
     double? effectiveHz,
+    double? intervalP99Ms,
+    double? jitterP99Ms,
   }) async {
     final uri = Uri.parse('${config.backendBaseUrl}/devices/${config.deviceId}');
     final response = await _client.patch(
       uri,
-      headers: {'Content-Type': 'application/json'},
+      headers: {
+        'Content-Type': 'application/json',
+        if (config.enrollmentToken.trim().isNotEmpty) 'X-Device-Enrollment-Token': config.enrollmentToken.trim(),
+        if (config.deviceId.trim().isNotEmpty) 'X-Device-Id': config.deviceId.trim(),
+      },
       body: jsonEncode({
         'connected': connected,
         'recording': recording,
         'battery_percent': batteryPercent,
         'storage_free_mb': storageFreeMb,
         'effective_hz': effectiveHz,
+        'interval_p99_ms': intervalP99Ms,
+        'jitter_p99_ms': jitterP99Ms,
       }),
     );
 

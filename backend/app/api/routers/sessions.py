@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 import json
 import logging
 import time
-from pathlib import Path
+from pathlib import Path as FsPath
 from typing import Annotated
 from uuid import uuid4
 
@@ -11,11 +11,13 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.auth import get_request_actor, require_operator_access
 from app.core.lifecycle import run_startup_checks
 from app.core.session_manager import SessionStateError, session_manager
-from app.db.models import Annotation, Device, Session as SessionModel, SessionDevice, VideoRecording
+from app.db.models import Annotation, Device, DeviceSamplingTelemetry, PreflightCheck, Session as SessionModel, SessionDevice, VideoRecording
 from app.db.session import get_db
 from app.schemas.sessions import (
+    SessionSamplingQualityHistoryResponse,
     SessionCreateRequest,
     SessionDeviceAssignmentResponse,
     SessionDeviceAssignRequest,
@@ -28,13 +30,20 @@ from app.schemas.video import VideoAnonymizeResponse, VideoMetadataResponse, Vid
 from app.services.artifacts import ensure_session_layout, finalize_session_artifacts, materialize_session_storage, seed_session_artifacts
 from app.services.clock_sync import clock_sync_service
 from app.services.csv_writer import csv_writer_service
-from app.services.preflight import is_preflight_passed, store_preflight_report
-from app.services.session_finalization import evaluate_session_completeness, write_completeness_report
+from app.services.preflight import (
+    is_preflight_passed,
+    store_preflight_checks,
+    store_preflight_overall,
+    store_preflight_report,
+    write_preflight_report_file,
+)
+from app.services.session_finalization import SessionCompleteness, evaluate_session_completeness, write_completeness_report
 from app.services.annotation_audit import write_annotation_audit
 from app.services.video_recorder import video_recorder_service
 from app.services.ws_runtime import ws_runtime
+from app.services.operator_audit import write_operator_action_audit
 
-router = APIRouter(prefix="/sessions", tags=["sessions"])
+router = APIRouter(prefix="/sessions", tags=["sessions"], dependencies=[Depends(require_operator_access)])
 logger = logging.getLogger(__name__)
 DBSession = Annotated[Session, Depends(get_db)]
 SESSION_ID_PATTERN = r"^\d{8}_\d{6}_[A-F0-9]{8}$"
@@ -53,6 +62,30 @@ def _generate_session_id() -> str:
 def _sidecar_path_for_session(session_id: str):
     settings = get_settings()
     return settings.data_root / "sessions" / session_id / "video" / f"{session_id}_webcam.json"
+
+
+def _audit_operator_action(
+    db: Session,
+    request: Request,
+    *,
+    action: str,
+    session_id: str | None = None,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    details: dict[str, object] | None = None,
+) -> None:
+    operator_id, operator_type = get_request_actor(request)
+    write_operator_action_audit(
+        db,
+        operator_id=operator_id or "operator",
+        operator_type=operator_type or "operator",
+        action=action,
+        session_id=session_id,
+        target_type=target_type,
+        target_id=target_id,
+        details=details or {},
+    )
+    db.commit()
 
 
 def _rollback_start_failure(db: Session, session_id: str) -> None:
@@ -105,6 +138,279 @@ def _clock_sync_has_bad_quality(report: dict[str, object]) -> bool:
         if str(item.get("sync_quality", "")) == "bad":
             return True
     return False
+
+
+def _check_clock_sync_quality(report: dict[str, object]) -> tuple[bool, str]:
+    if _clock_sync_has_bad_quality(report):
+        return False, f"overall={report.get('overall_sync_quality', 'unknown')}"
+    return True, f"overall={report.get('overall_sync_quality', 'unknown')}"
+
+
+def _check_required_roles(bindings: list[SessionDeviceBindingResponse]) -> tuple[bool, str, list[str], list[str], list[str]]:
+    required_roles = {role.lower() for role in get_settings().required_roles}
+    required_bindings = [binding for binding in bindings if binding.required]
+    role_counts: dict[str, int] = {}
+    for binding in required_bindings:
+        role = binding.device_role.lower()
+        role_counts[role] = role_counts.get(role, 0) + 1
+
+    assigned_roles = set(role_counts.keys())
+    missing_roles = sorted(required_roles - assigned_roles)
+    duplicate_roles = sorted([role for role, count in role_counts.items() if count > 1])
+    invalid_roles = sorted([role for role in assigned_roles if role not in required_roles])
+    passed = not missing_roles and not duplicate_roles and not invalid_roles
+    detail = (
+        f"missing={','.join(missing_roles) or '-'};"
+        f"duplicate={','.join(duplicate_roles) or '-'};"
+        f"invalid={','.join(invalid_roles) or '-'}"
+    )
+    return passed, detail, missing_roles, duplicate_roles, invalid_roles
+
+
+def _latest_preflight_overall(db: Session, session_id: str) -> PreflightCheck | None:
+    return (
+        db.query(PreflightCheck)
+        .filter(
+            PreflightCheck.session_id == session_id,
+            PreflightCheck.check_name == "preflight_overall",
+        )
+        .order_by(PreflightCheck.measured_at.desc(), PreflightCheck.id.desc())
+        .first()
+    )
+
+
+def _assert_start_preflight_fresh(db: Session, session: SessionModel) -> tuple[bool, dict[str, object] | None]:
+    row = _latest_preflight_overall(db, session.session_id)
+    if row is None:
+        raise HTTPException(status_code=400, detail="preflight belum pernah dijalankan, panggil POST /sessions/{session_id}/preflight/run")
+
+    now = datetime.now(UTC).replace(tzinfo=None)
+    ttl_seconds = max(1, int(get_settings().preflight_report_ttl_seconds))
+    age_seconds = max(0.0, (now - row.measured_at).total_seconds())
+    if age_seconds > ttl_seconds:
+        raise HTTPException(
+            status_code=400,
+            detail=f"preflight report expired ({age_seconds:.1f}s), jalankan ulang POST /sessions/{session.session_id}/preflight/run",
+        )
+
+    details_payload: dict[str, object] | None = None
+    if row.details:
+        try:
+            parsed = json.loads(row.details)
+            if isinstance(parsed, dict):
+                details_payload = parsed
+        except Exception:
+            details_payload = None
+
+    if not bool(row.passed):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "preflight belum lulus",
+                "preflight": details_payload or {"passed": False},
+            },
+        )
+    return True, details_payload
+
+
+async def _run_session_preflight(db: Session, session: SessionModel) -> dict[str, object]:
+    measured_at = datetime.now(UTC).replace(tzinfo=None)
+    measured_at_iso = measured_at.isoformat()
+    settings = get_settings()
+    check_items: list[tuple[str, bool, str]] = []
+
+    startup_report = run_startup_checks()
+    backend_healthy = bool(startup_report.get("backend_healthy", False))
+    storage_ok = bool(startup_report.get("storage_path_writable", False))
+    webcam_ok = bool(startup_report.get("webcam_available", False))
+    check_items.extend(
+        [
+            ("backend_healthy", backend_healthy, "FastAPI app startup check"),
+            (
+                "storage_path_writable",
+                storage_ok,
+                f"free_bytes={int(startup_report.get('storage_free_bytes', 0) or 0)}",
+            ),
+            ("webcam_available", webcam_ok, str(startup_report.get("webcam_detail", ""))),
+        ]
+    )
+
+    bindings = _load_session_bindings(db, session.session_id)
+    required_bindings = [binding for binding in bindings if binding.required]
+    required_device_ids = [binding.device_id for binding in required_bindings]
+
+    roles_ok, roles_detail, missing_roles, duplicate_roles, invalid_roles = _check_required_roles(bindings)
+    check_items.append(("required_roles_valid", roles_ok, roles_detail))
+
+    devices = (
+        db.query(Device)
+        .filter(Device.device_id.in_(required_device_ids))
+        .all()
+        if required_device_ids
+        else []
+    )
+    device_map = {item.device_id: item for item in devices}
+
+    missing_devices = sorted([device_id for device_id in required_device_ids if device_id not in device_map])
+    devices_present_ok = not missing_devices and bool(required_device_ids)
+    check_items.append(
+        (
+            "required_devices_registered",
+            devices_present_ok,
+            f"missing_devices={','.join(missing_devices) or '-'}",
+        )
+    )
+
+    offline_device_ids = sorted(
+        [
+            device_id
+            for device_id in required_device_ids
+            if device_id in device_map and not bool(device_map[device_id].connected)
+        ]
+    )
+    devices_online_ok = devices_present_ok and not offline_device_ids
+    check_items.append(
+        (
+            "required_devices_online",
+            devices_online_ok,
+            f"offline_devices={','.join(offline_device_ids) or '-'}",
+        )
+    )
+
+    low_battery_ids = sorted(
+        [
+            device_id
+            for device_id in required_device_ids
+            if device_id in device_map
+            and (
+                device_map[device_id].battery_percent is None
+                or float(device_map[device_id].battery_percent) <= float(settings.battery_critical_percent)
+            )
+        ]
+    )
+    battery_ok = devices_present_ok and not low_battery_ids
+    check_items.append(
+        (
+            "device_battery_ok",
+            battery_ok,
+            f"threshold={settings.battery_critical_percent};low_or_unknown={','.join(low_battery_ids) or '-'}",
+        )
+    )
+
+    low_storage_ids = sorted(
+        [
+            device_id
+            for device_id in required_device_ids
+            if device_id in device_map
+            and (
+                device_map[device_id].storage_free_mb is None
+                or int(device_map[device_id].storage_free_mb) <= int(settings.device_storage_critical_mb)
+            )
+        ]
+    )
+    storage_devices_ok = devices_present_ok and not low_storage_ids
+    check_items.append(
+        (
+            "device_storage_ok",
+            storage_devices_ok,
+            f"threshold_mb={settings.device_storage_critical_mb};low_or_unknown={','.join(low_storage_ids) or '-'}",
+        )
+    )
+
+    hz_threshold = float(settings.session_target_sampling_hz) * float(settings.preflight_effective_hz_min_ratio)
+    low_hz_ids = sorted(
+        [
+            device_id
+            for device_id in required_device_ids
+            if device_id in device_map
+            and (
+                device_map[device_id].effective_hz is None
+                or float(device_map[device_id].effective_hz) < hz_threshold
+            )
+        ]
+    )
+    effective_hz_ok = devices_present_ok and not low_hz_ids
+    check_items.append(
+        (
+            "device_effective_hz_ok",
+            effective_hz_ok,
+            f"threshold_hz={hz_threshold:.2f};low_or_unknown={','.join(low_hz_ids) or '-'}",
+        )
+    )
+
+    sync_report: dict[str, object] = {
+        "session_id": session.session_id,
+        "devices": [],
+        "overall_sync_quality": "unknown",
+        "overall_sync_quality_color": "yellow",
+    }
+    clock_sync_ok = False
+    if devices_online_ok:
+        await ws_runtime.bind_devices_to_session(session_id=session.session_id, device_ids=required_device_ids)
+        sync_report = await clock_sync_service.run_preflight_sync(
+            session_id=session.session_id,
+            device_ids=required_device_ids,
+        )
+        clock_sync_ok, clock_detail = _check_clock_sync_quality(sync_report)
+    else:
+        clock_detail = "required devices offline"
+
+    check_items.append(("clock_sync_quality_ok", clock_sync_ok, clock_detail))
+
+    overall_passed = all(item[1] for item in check_items)
+    run_id = f"{session.session_id}:{measured_at.strftime('%Y%m%d%H%M%S%f')}"
+    expires_at = datetime.fromtimestamp(
+        measured_at.timestamp() + max(1, int(settings.preflight_report_ttl_seconds)),
+        tz=UTC,
+    ).replace(tzinfo=None)
+
+    check_items_payload = [
+        {
+            "check_name": name,
+            "passed": passed,
+            "details": details,
+            "measured_at": measured_at_iso,
+        }
+        for name, passed, details in check_items
+    ]
+    report = {
+        "session_id": session.session_id,
+        "run_id": run_id,
+        "measured_at": measured_at_iso,
+        "expires_at": expires_at.isoformat(),
+        "overall_passed": overall_passed,
+        "startup": startup_report,
+        "required_device_ids": required_device_ids,
+        "check_items": check_items_payload,
+        "clock_sync": sync_report,
+        "required_roles_detail": {
+            "missing": missing_roles,
+            "duplicate": duplicate_roles,
+            "invalid": invalid_roles,
+        },
+    }
+
+    store_preflight_checks(
+        db,
+        [(item["check_name"], bool(item["passed"]), str(item["details"])) for item in check_items_payload],
+        session_id=session.session_id,
+        measured_at=measured_at,
+    )
+    store_preflight_overall(
+        db,
+        session_id=session.session_id,
+        passed=overall_passed,
+        details=report,
+        measured_at=measured_at,
+    )
+
+    session.preflight_passed = overall_passed
+    db.commit()
+    db.refresh(session)
+
+    write_preflight_report_file(session.session_id, report)
+    materialize_session_storage(db, session.session_id)
+    return report
 
 
 def _load_session_bindings(db: Session, session_id: str) -> list[SessionDeviceBindingResponse]:
@@ -183,11 +489,19 @@ def _close_session_outputs(db: Session, session_id: str) -> None:
     video_recorder_service.stop_session_recording(db, session_id, suppress_errors=True)
 
 
-def _sensor_summary_files(session_id: str) -> list[Path]:
+def _sensor_summary_files(session_id: str) -> list[FsPath]:
     sensor_dir = get_settings().data_root / "sessions" / session_id / "sensor"
     if not sensor_dir.exists():
         return []
     return sorted(sensor_dir.glob("*.summary.json"))
+
+
+def _completeness_payload(report: SessionCompleteness) -> dict[str, object]:
+    return {
+        "complete": report.complete,
+        "checks": report.checks,
+        "detail": report.detail,
+    }
 
 
 def _update_missing_sample_sync_report(session_id: str) -> dict[str, object]:
@@ -373,27 +687,80 @@ async def create_session(payload: SessionCreateRequest, request: Request, db: DB
         },
     )
 
+    _audit_operator_action(
+        db,
+        request,
+        action="session.create",
+        session_id=session_id,
+        target_type="session",
+        target_id=session_id,
+        details={"preflight_passed": bool(session.preflight_passed), "override_reason": session.override_reason or ""},
+    )
+
     return session
+
+
+@router.post(
+    "/{session_id}/preflight/run",
+    responses={404: {"description": "Session not found"}, 409: {"description": "Invalid session state transition"}},
+)
+async def run_session_preflight(
+    session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)],
+    db: DBSession,
+    request: Request,
+) -> dict[str, object]:
+    session = db.get(SessionModel, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+    if session.status != "CREATED":
+        raise HTTPException(status_code=409, detail=f"preflight run hanya boleh saat session CREATED, saat ini {session.status}")
+
+    report = await _run_session_preflight(db, session)
+    await ws_runtime.publish_session_event(
+        session_id,
+        {
+            "type": "SESSION_PREFLIGHT_RESULT",
+            "session_id": session_id,
+            "overall_passed": bool(report.get("overall_passed", False)),
+            "expires_at": report.get("expires_at"),
+            "check_items": report.get("check_items", []),
+        },
+    )
+    _audit_operator_action(
+        db,
+        request,
+        action="session.preflight.run",
+        session_id=session_id,
+        target_type="session",
+        target_id=session_id,
+        details={"overall_passed": bool(report.get("overall_passed", False))},
+    )
+    return report
 
 
 @router.post("/{session_id}/start", responses={400: {"description": "Preflight failed"}, 404: {"description": "Session not found"}, 409: {"description": "Invalid session state transition"}})
 async def start_session(
     session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)],
     db: DBSession,
+    request: Request,
 ) -> SessionResponse:
     session = db.get(SessionModel, session_id)
     if not session:
         raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
 
-    server_report = run_startup_checks()
-    preflight_ok = is_preflight_passed(server_report)
+    preflight_ok, _latest_preflight = _assert_start_preflight_fresh(db, session)
     if not preflight_ok and not session.override_reason:
-        raise HTTPException(status_code=400, detail="server preflight failed; start diblokir")
+        raise HTTPException(status_code=400, detail="preflight failed; start diblokir")
 
-    session.preflight_passed = preflight_ok
-    store_preflight_report(db, server_report, session_id=session_id)
+    session.preflight_passed = bool(preflight_ok)
+    db.commit()
+    db.refresh(session)
 
     bindings = _load_session_bindings(db, session_id)
+    await ws_runtime.bind_devices_to_session(
+        session_id=session_id,
+        device_ids=[binding.device_id for binding in bindings],
+    )
     online_device_ids = await ws_runtime.get_online_device_ids(session_id)
     _validate_required_roles_ready(
         bindings=bindings,
@@ -512,6 +879,15 @@ async def start_session(
             "start_command_sent_devices": sent_to,
         },
     )
+    _audit_operator_action(
+        db,
+        request,
+        action="session.start",
+        session_id=session_id,
+        target_type="session",
+        target_id=session_id,
+        details={"start_command_sent_devices": sent_to, "clock_sync_quality": sync_report.get("overall_sync_quality", "unknown")},
+    )
     return session
 
 
@@ -527,6 +903,7 @@ def assign_session_devices(
     session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)],
     payload: SessionDeviceAssignRequest,
     db: DBSession,
+    request: Request,
 ) -> SessionDeviceAssignmentResponse:
     session = db.get(SessionModel, session_id)
     if not session:
@@ -543,6 +920,20 @@ def assign_session_devices(
         session_id=session_id,
         assignments=payload.assignments,
         replace=payload.replace,
+    )
+    _audit_operator_action(
+        db,
+        request,
+        action="session.devices.assign",
+        session_id=session_id,
+        target_type="session",
+        target_id=session_id,
+        details={
+            "replace": bool(payload.replace),
+            "assignments": [
+                {"device_id": item.device_id, "required": bool(item.required)} for item in payload.assignments
+            ],
+        },
     )
 
     return SessionDeviceAssignmentResponse(
@@ -569,7 +960,11 @@ def list_session_devices(
 
 
 @router.post("/{session_id}/stop", responses={404: {"description": "Session not found"}, 409: {"description": "Invalid session state transition"}})
-async def stop_session(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)], db: DBSession) -> SessionResponse:
+async def stop_session(
+    session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)],
+    db: DBSession,
+    request: Request,
+) -> SessionResponse:
     session = db.get(SessionModel, session_id)
     if not session:
         raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
@@ -655,6 +1050,15 @@ async def stop_session(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTER
         },
     )
     materialize_session_storage(db, session_id)
+    _audit_operator_action(
+        db,
+        request,
+        action="session.stop",
+        session_id=session_id,
+        target_type="session",
+        target_id=session_id,
+        details={"status_after": session.status},
+    )
     return session
 
 
@@ -686,6 +1090,64 @@ def get_sync_report(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)]
     if not session:
         raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
     return clock_sync_service.read_sync_report(session_id)
+
+
+@router.get("/{session_id}/completeness", responses=SESSION_RESPONSES_404)
+def get_session_completeness(
+    session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)],
+    db: DBSession,
+) -> dict[str, object]:
+    session = db.get(SessionModel, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+
+    report = evaluate_session_completeness(db, session_id)
+    return {
+        "session_id": session_id,
+        **_completeness_payload(report),
+    }
+
+
+@router.get("/{session_id}/sampling-quality", responses=SESSION_RESPONSES_404)
+def get_session_sampling_quality_history(
+    session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)],
+    db: DBSession,
+    device_id: str | None = None,
+    limit: int = 500,
+) -> SessionSamplingQualityHistoryResponse:
+    session = db.get(SessionModel, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+
+    safe_limit = min(max(int(limit), 1), 5000)
+    query = db.query(DeviceSamplingTelemetry).filter(DeviceSamplingTelemetry.session_id == session_id)
+    if device_id and device_id.strip():
+        query = query.filter(DeviceSamplingTelemetry.device_id == device_id.strip())
+
+    rows = (
+        query.order_by(DeviceSamplingTelemetry.measured_at.desc(), DeviceSamplingTelemetry.id.desc())
+        .limit(safe_limit)
+        .all()
+    )
+    points = list(reversed(rows))
+
+    return SessionSamplingQualityHistoryResponse(
+        session_id=session_id,
+        points=[
+            {
+                "device_id": row.device_id,
+                "connected": bool(row.connected),
+                "recording": bool(row.recording),
+                "battery_percent": row.battery_percent,
+                "storage_free_mb": row.storage_free_mb,
+                "effective_hz": row.effective_hz,
+                "interval_p99_ms": row.interval_p99_ms,
+                "jitter_p99_ms": row.jitter_p99_ms,
+                "measured_at": row.measured_at,
+            }
+            for row in points
+        ],
+    )
 
 
 @router.get("/{session_id}/video/metadata/download", responses=SESSION_RESPONSES_404)
@@ -739,8 +1201,17 @@ async def finalize_session(
     session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)],
     payload: SessionFinalizeRequest,
     db: DBSession,
+    request: Request,
 ) -> SessionResponse:
     await ws_runtime.stop_session_countdown(session_id)
+    session = db.get(SessionModel, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
+
+    if session.status == "SYNCING":
+        _close_session_outputs(db, session_id)
+        session = _set_session_status(db, session, "ENDING")
+
     if payload.incomplete and not (payload.reason or "").strip():
         raise HTTPException(status_code=400, detail="reason wajib diisi untuk finalize incomplete")
 
@@ -752,11 +1223,7 @@ async def finalize_session(
                 status_code=409,
                 detail={
                     "message": "session belum lengkap, gunakan finalize incomplete dengan reason",
-                    "completeness": {
-                        "complete": completeness.complete,
-                        "checks": completeness.checks,
-                        "detail": completeness.detail,
-                    },
+                    "completeness": _completeness_payload(completeness),
                 },
             )
 
@@ -797,4 +1264,13 @@ async def finalize_session(
         },
     )
     materialize_session_storage(db, session_id)
+    _audit_operator_action(
+        db,
+        request,
+        action="session.finalize",
+        session_id=session_id,
+        target_type="session",
+        target_id=session_id,
+        details={"incomplete": bool(payload.incomplete), "reason": (payload.reason or "").strip()},
+    )
     return session

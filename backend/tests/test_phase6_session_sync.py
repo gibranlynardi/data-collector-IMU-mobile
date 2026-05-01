@@ -6,9 +6,10 @@ from sqlalchemy.orm import sessionmaker
 
 import app.db.session as db_session
 import app.main as main_app
+import app.services.storage_monitor as storage_monitor_module
 from app.core.config import get_settings
 from app.db.base import Base
-from app.db.models import Device, Session as SessionModel, SessionDevice
+from app.db.models import Device, PreflightCheck, Session as SessionModel, SessionDevice
 from app.services.clock_sync import clock_sync_service
 from app.services.csv_writer import csv_writer_service
 from app.services.video_recorder import video_recorder_service
@@ -32,6 +33,7 @@ def test_start_session_writes_sync_report_and_exposes_endpoint(tmp_path, monkeyp
 
     db_session.engine = engine
     db_session.SessionLocal = testing_session_local
+    storage_monitor_module.SessionLocal = testing_session_local
     main_app.engine = engine
 
     Base.metadata.create_all(bind=engine)
@@ -43,6 +45,14 @@ def test_start_session_writes_sync_report_and_exposes_endpoint(tmp_path, monkeyp
         db.add(Device(device_id=device_id, device_role="chest", connected=True))
         db.add(SessionModel(session_id=session_id, status="CREATED", preflight_passed=True))
         db.add(SessionDevice(session_id=session_id, device_id=device_id, required=True))
+        db.add(
+            PreflightCheck(
+                session_id=session_id,
+                check_name="preflight_overall",
+                passed=True,
+                details='{"overall_passed": true}',
+            )
+        )
         db.commit()
 
     monkeypatch.setattr("app.api.routers.sessions.run_startup_checks", lambda: {"backend_healthy": True, "webcam_available": True, "storage_path_writable": True})
@@ -134,6 +144,14 @@ def test_start_session_rejects_when_session_has_no_device_assignments(tmp_path, 
     with testing_session_local() as db:
         db.add(Device(device_id=device_id, device_role="chest", connected=True))
         db.add(SessionModel(session_id=session_id, status="CREATED", preflight_passed=True))
+        db.add(
+            PreflightCheck(
+                session_id=session_id,
+                check_name="preflight_overall",
+                passed=True,
+                details='{"overall_passed": true}',
+            )
+        )
         db.commit()
 
     monkeypatch.setattr("app.api.routers.sessions.run_startup_checks", lambda: {"backend_healthy": True, "webcam_available": True, "storage_path_writable": True})

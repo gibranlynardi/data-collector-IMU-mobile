@@ -21,6 +21,8 @@ class Device(Base):
     battery_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
     storage_free_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
     effective_hz: Mapped[float | None] = mapped_column(Float, nullable=True)
+    interval_p99_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    jitter_p99_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -49,6 +51,22 @@ class SessionDevice(Base):
     required: Mapped[bool] = mapped_column(Boolean, default=True)
     connected_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class DeviceSamplingTelemetry(Base):
+    __tablename__ = "device_sampling_telemetry"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str | None] = mapped_column(ForeignKey(SESSION_FK), nullable=True, index=True)
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.device_id"), index=True)
+    connected: Mapped[bool] = mapped_column(Boolean, default=False)
+    recording: Mapped[bool] = mapped_column(Boolean, default=False)
+    battery_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    storage_free_mb: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    effective_hz: Mapped[float | None] = mapped_column(Float, nullable=True)
+    interval_p99_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    jitter_p99_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    measured_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
 class Annotation(Base):
@@ -129,3 +147,17 @@ class ArchiveUpload(Base):
     checksum: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class OperatorActionAudit(Base):
+    __tablename__ = "operator_action_audits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    operator_id: Mapped[str] = mapped_column(String(128), index=True)
+    operator_type: Mapped[str] = mapped_column(String(32), default="operator")
+    action: Mapped[str] = mapped_column(String(128), index=True)
+    session_id: Mapped[str | None] = mapped_column(ForeignKey(SESSION_FK), nullable=True, index=True)
+    target_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    target_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    details_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

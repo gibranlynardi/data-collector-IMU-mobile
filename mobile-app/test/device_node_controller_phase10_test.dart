@@ -11,6 +11,7 @@ import 'package:sensors_app/services/backend_client.dart';
 import 'package:sensors_app/services/device_node_controller.dart';
 import 'package:sensors_app/services/local_store.dart';
 import 'package:sensors_app/services/node_config_store.dart';
+import 'package:sensors_app/services/runtime_guard_service.dart';
 import 'package:sensors_app/services/sensor_sampler.dart';
 import 'package:sensors_app/services/socket_client.dart';
 
@@ -37,7 +38,7 @@ class _FakeBackendClient implements BackendClientPort {
   }
 
   @override
-  Future<void> patchDeviceStatus({required NodeConfig config, required bool connected, required bool recording, double? batteryPercent, int? storageFreeMb, double? effectiveHz}) async {}
+  Future<void> patchDeviceStatus({required NodeConfig config, required bool connected, required bool recording, double? batteryPercent, int? storageFreeMb, double? effectiveHz, double? intervalP99Ms, double? jitterP99Ms}) async {}
 
   @override
   void close() {}
@@ -200,6 +201,26 @@ class _InMemoryStore implements LocalStorePort {
   }
 }
 
+class _FakeRuntimeGuard implements RuntimeGuardPort {
+  bool enabled = false;
+
+  @override
+  Future<void> disableRecordingGuard() async {
+    enabled = false;
+  }
+
+  @override
+  Future<void> enableRecordingGuard({required String sessionId, required String deviceId}) async {
+    enabled = true;
+  }
+
+  @override
+  Future<bool> isBatteryOptimizationIgnored() async => true;
+
+  @override
+  Future<void> openBatteryOptimizationSettings() async {}
+}
+
 void main() {
   test('offline keeps local recording and reconnect replays backlog', () async {
     final config = NodeConfig.defaults().copyWith(
@@ -212,6 +233,7 @@ void main() {
 
     final store = _InMemoryStore()..recoveredSessionId = config.sessionId;
     final sampler = _FakeSampler();
+    final runtimeGuard = _FakeRuntimeGuard();
     final socket1 = _FakeSocket();
     final socket2 = _FakeSocket();
     final controller = DeviceNodeController(
@@ -219,6 +241,7 @@ void main() {
       localStore: store,
       backendClient: _FakeBackendClient(),
       sensorSampler: sampler,
+      runtimeGuard: runtimeGuard,
       socketClient: _FakeSocketClient([socket1, socket2]),
       connectivityChanges: () => const Stream<List<ConnectivityResult>>.empty(),
       batteryLevelProvider: () async => 80,
@@ -316,12 +339,14 @@ void main() {
 
     final store = _InMemoryStore()..recoveredSessionId = config.sessionId;
     final sampler = _FakeSampler();
+    final runtimeGuard = _FakeRuntimeGuard();
     final socket = _FakeSocket();
     final controller = DeviceNodeController(
       configStore: _FakeConfigStore(config),
       localStore: store,
       backendClient: _FakeBackendClient(),
       sensorSampler: sampler,
+      runtimeGuard: runtimeGuard,
       socketClient: _FakeSocketClient([socket]),
       connectivityChanges: () => const Stream<List<ConnectivityResult>>.empty(),
       batteryLevelProvider: () async => 80,
@@ -363,12 +388,14 @@ void main() {
 
     final store = _InMemoryStore()..recoveredSessionId = config.sessionId;
     final sampler = _FakeSampler();
+    final runtimeGuard = _FakeRuntimeGuard();
     final socket = _FakeSocket();
     final controller = DeviceNodeController(
       configStore: _FakeConfigStore(config),
       localStore: store,
       backendClient: _FakeBackendClient(),
       sensorSampler: sampler,
+      runtimeGuard: runtimeGuard,
       socketClient: _FakeSocketClient([socket]),
       connectivityChanges: () => const Stream<List<ConnectivityResult>>.empty(),
       batteryLevelProvider: () async => 80,

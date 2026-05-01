@@ -8,12 +8,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import app.api.routers.ws as ws_router
+import app.api.routers.sessions as sessions_router
 import app.db.session as db_session
 import app.main as main_app
+import app.services.storage_monitor as storage_monitor_module
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.models import Annotation, Device, Session as SessionModel, SessionDevice
 from app.services.csv_writer import csv_writer_service
+from app.services.session_finalization import SessionCompleteness
 from app.services.ws_runtime import ws_runtime
 from generated.sensor_sample_pb2 import SensorBatch
 
@@ -35,6 +38,7 @@ def session_factory(tmp_path, monkeypatch) -> Iterator[sessionmaker]:
     db_session.engine = engine
     db_session.SessionLocal = testing_session_local
     ws_router.SessionLocal = testing_session_local
+    storage_monitor_module.SessionLocal = testing_session_local
     main_app.engine = engine
 
     Base.metadata.create_all(bind=engine)
@@ -186,6 +190,40 @@ def test_ws_handshake_rejects_device_not_mapped(client: TestClient, session_fact
         assert hello_ack["type"] == "HELLO_ACK"
 
 
+def test_ws_handshake_allows_unbound_presence_and_blocks_ingest_without_session(
+    client: TestClient,
+    session_factory: sessionmaker,
+) -> None:
+    device_id = "DEVICE-CHEST-001"
+    with session_factory() as db:
+        db.add(Device(device_id=device_id, device_role="chest", connected=False))
+        db.commit()
+
+    with client.websocket_connect(f"/ws/device/{device_id}") as websocket:
+        websocket.send_text(
+            json.dumps(
+                {
+                    "type": "HELLO",
+                    "device_id": device_id,
+                    "device_role": "chest",
+                    "session_id": "",
+                    "local_last_seq": 0,
+                }
+            )
+        )
+        hello_ack = websocket.receive_json()
+        assert hello_ack["type"] == "HELLO_ACK"
+        assert hello_ack["session_state"] == "UNBOUND"
+        assert hello_ack["ingest_mode"] == "IDLE"
+        assert hello_ack["sampling_allowed"] is False
+
+        payload = _build_sensor_batch("", device_id, start_seq=1, end_seq=1)
+        websocket.send_bytes(payload)
+        error = websocket.receive_json()
+        assert error["type"] == "ERROR"
+        assert error["code"] == "SESSION_REQUIRED"
+
+
 def test_ws_ingest_rejects_when_session_not_running_even_if_connected(client: TestClient, session_factory: sessionmaker) -> None:
     session_id = "20260419_143022_A1B2C3D4"
     device_id = "DEVICE-CHEST-001"
@@ -322,3 +360,87 @@ def test_dashboard_reconnect_gets_session_state_and_active_annotations(client: T
         annotation_snapshot = next(event for event in received if event["type"] == "ANNOTATIONS_SNAPSHOT")
         assert len(annotation_snapshot["active_annotations"]) == 1
         assert annotation_snapshot["active_annotations"][0]["annotation_id"] == f"ANN-{session_id}-0001"
+
+
+def test_syncing_reconnect_accepts_backlog_and_finalize_complete(
+    client: TestClient,
+    session_factory: sessionmaker,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = "20260419_143022_A1B2C3D4"
+    device_id = "DEVICE-CHEST-001"
+
+    with session_factory() as db:
+        db.add(Device(device_id=device_id, device_role="chest", connected=False))
+        db.add(SessionModel(session_id=session_id, status="RUNNING", preflight_passed=True))
+        db.add(SessionDevice(session_id=session_id, device_id=device_id, required=True))
+        db.commit()
+
+    async def _fake_stop_acks_pending(_sid: str, device_ids: list[str], timeout_seconds: float):
+        del timeout_seconds
+        assert _sid == session_id
+        return {
+            "sent_devices": list(device_ids),
+            "acked_devices": [],
+            "pending_devices": list(device_ids),
+        }
+
+    monkeypatch.setattr(sessions_router.ws_runtime, "request_stop_acks", _fake_stop_acks_pending)
+    monkeypatch.setattr(sessions_router.csv_writer_service, "flush_session", lambda _sid: None)
+    monkeypatch.setattr(sessions_router.csv_writer_service, "close_session", lambda _sid: None)
+    monkeypatch.setattr(
+        sessions_router.video_recorder_service,
+        "stop_session_recording",
+        lambda _db, _sid, suppress_errors=False: {"status": "completed"},
+    )
+    monkeypatch.setattr(
+        "app.api.routers.sessions.evaluate_session_completeness",
+        lambda _db, _sid: SessionCompleteness(
+            complete=True,
+            checks={
+                "required_devices_have_data": True,
+                "sample_count_reasonable": True,
+                "no_large_missing_gap": True,
+                "video_file_valid": True,
+                "annotations_complete": True,
+            },
+            detail={"forced_by_test": True},
+        ),
+    )
+
+    stop_response = client.post(f"/sessions/{session_id}/stop")
+    assert stop_response.status_code == 200
+    assert stop_response.json()["status"] == "SYNCING"
+
+    payload = _build_sensor_batch(session_id, device_id, start_seq=1, end_seq=3)
+    with client.websocket_connect(f"/ws/device/{device_id}") as websocket:
+        websocket.send_text(_hello_payload(session_id, device_id, local_last_seq=3))
+        hello_ack = websocket.receive_json()
+        assert hello_ack["type"] == "HELLO_ACK"
+        assert hello_ack["session_state"] == "SYNCING"
+        assert hello_ack["ingest_mode"] == "DRAIN_ONLY"
+        assert hello_ack["sampling_allowed"] is False
+
+        websocket.send_bytes(payload)
+        ingest_ack = websocket.receive_json()
+        assert ingest_ack["type"] == "ACK"
+        assert ingest_ack["batch_end_seq"] == 3
+        assert ingest_ack["last_received_seq"] == 3
+
+        websocket.send_text(
+            json.dumps(
+                {
+                    "type": "SENSOR_BATCH_DEBUG",
+                    "sample_count": 1,
+                    "start_seq": 4,
+                    "end_seq": 4,
+                }
+            )
+        )
+        debug_reject = websocket.receive_json()
+        assert debug_reject["type"] == "ERROR"
+        assert debug_reject["code"] == "SESSION_DRAIN_ONLY"
+
+    finalize_response = client.post(f"/sessions/{session_id}/finalize", json={"incomplete": False})
+    assert finalize_response.status_code == 200
+    assert finalize_response.json()["status"] == "COMPLETED"

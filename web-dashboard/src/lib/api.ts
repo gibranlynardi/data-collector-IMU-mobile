@@ -1,40 +1,84 @@
 import {
   AnnotationResponse,
+  ArchiveUploadStatusResponse,
   ArtifactResponse,
   DeviceResponse,
   HealthResponse,
   PreflightResponse,
+  SessionCompletenessResponse,
+  SessionSamplingQualityHistoryResponse,
   SessionDeviceAssignItem,
   SessionDeviceAssignmentResponse,
   SessionResponse,
   SyncReport,
+  UploadInstructionsResponse,
   VideoAnonymizeResponse,
   VideoMetadataResponse,
   VideoStatusResponse,
 } from "@/lib/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+const OPERATOR_TOKEN = process.env.NEXT_PUBLIC_OPERATOR_API_TOKEN ?? "";
+const OPERATOR_ID = process.env.NEXT_PUBLIC_OPERATOR_ID ?? "dashboard-web";
+
+export class ApiError extends Error {
+  status: number;
+  payload: unknown;
+
+  constructor(message: string, status: number, payload: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
+export function isApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError;
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
       "Content-Type": "application/json",
+      ...(OPERATOR_TOKEN ? { "X-Operator-Token": OPERATOR_TOKEN } : {}),
+      ...(OPERATOR_ID ? { "X-Operator-Id": OPERATOR_ID } : {}),
       ...(init?.headers ?? {}),
     },
     cache: "no-store",
     ...init,
   });
 
+  const rawBody = await response.text();
+  let parsedBody: unknown = null;
+  if (rawBody) {
+    try {
+      parsedBody = JSON.parse(rawBody);
+    } catch {
+      parsedBody = rawBody;
+    }
+  }
+
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `Request failed (${response.status})`);
+    let detailMessage = `Request failed (${response.status})`;
+    if (typeof parsedBody === "string" && parsedBody.trim()) {
+      detailMessage = parsedBody;
+    } else if (
+      parsedBody &&
+      typeof parsedBody === "object" &&
+      "detail" in parsedBody &&
+      typeof (parsedBody as { detail?: unknown }).detail === "string"
+    ) {
+      detailMessage = String((parsedBody as { detail: string }).detail);
+    }
+    throw new ApiError(detailMessage, response.status, parsedBody);
   }
 
   if (response.status === 204) {
     return undefined as T;
   }
 
-  return (await response.json()) as T;
+  return (parsedBody as T) ?? (undefined as T);
 }
 
 export function getApiBaseUrl(): string {
@@ -75,7 +119,14 @@ export async function stopSession(sessionId: string): Promise<SessionResponse> {
 export async function finalizeSession(sessionId: string, incomplete = false): Promise<SessionResponse> {
   return request<SessionResponse>(`/sessions/${sessionId}/finalize`, {
     method: "POST",
-    body: JSON.stringify({ incomplete }),
+    body: JSON.stringify({ incomplete, reason: null }),
+  });
+}
+
+export async function finalizeSessionWithReason(sessionId: string, reason: string): Promise<SessionResponse> {
+  return request<SessionResponse>(`/sessions/${sessionId}/finalize`, {
+    method: "POST",
+    body: JSON.stringify({ incomplete: true, reason }),
   });
 }
 
@@ -129,6 +180,47 @@ export async function deleteAnnotation(annotationId: string): Promise<{ deleted:
 
 export async function fetchArtifacts(sessionId: string): Promise<ArtifactResponse[]> {
   return request<ArtifactResponse[]>(`/sessions/${sessionId}/artifacts`);
+}
+
+export async function fetchUploadInstructions(sessionId: string): Promise<UploadInstructionsResponse> {
+  return request<UploadInstructionsResponse>(`/sessions/${sessionId}/upload-instructions`);
+}
+
+export async function fetchArchiveUploadStatus(sessionId: string): Promise<ArchiveUploadStatusResponse> {
+  return request<ArchiveUploadStatusResponse>(`/sessions/${sessionId}/archive-upload`);
+}
+
+export async function markArchiveUploaded(
+  sessionId: string,
+  payload: { uploaded_by: string; remote_path: string; checksum: string },
+): Promise<ArchiveUploadStatusResponse> {
+  return request<ArchiveUploadStatusResponse>(`/sessions/${sessionId}/archive-upload/mark-uploaded`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchSessionCompleteness(sessionId: string): Promise<SessionCompletenessResponse> {
+  return request<SessionCompletenessResponse>(`/sessions/${sessionId}/completeness`);
+}
+
+export async function fetchSessionSamplingQualityHistory(
+  sessionId: string,
+  options?: { deviceId?: string; limit?: number },
+): Promise<SessionSamplingQualityHistoryResponse> {
+  const params = new URLSearchParams();
+  if (options?.deviceId) {
+    params.set("device_id", options.deviceId);
+  }
+  if (typeof options?.limit === "number") {
+    params.set("limit", String(options.limit));
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return request<SessionSamplingQualityHistoryResponse>(`/sessions/${sessionId}/sampling-quality${suffix}`);
+}
+
+export function webcamSnapshotUrl(): string {
+  return `${API_BASE_URL}/health/webcam-snapshot.jpg`;
 }
 
 export async function fetchSyncReport(sessionId: string): Promise<SyncReport> {

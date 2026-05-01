@@ -19,6 +19,15 @@ Panduan ini menutup kebutuhan operator untuk Phase 14.
 
 ## 3) Jalankan backend + dashboard
 
+Sebelum menjalankan, isi token keamanan di `.env`:
+
+- `OPERATOR_API_TOKEN=<token-operator-lan>`
+- `DEVICE_ENROLLMENT_TOKEN=<token-device-lan>`
+- `NEXT_PUBLIC_OPERATOR_API_TOKEN=<token-operator-lan>`
+- `NEXT_PUBLIC_OPERATOR_ID=dashboard-web`
+
+Token operator dipakai dashboard untuk REST + WS. Token enrollment dipakai phone saat register/status/ws handshake.
+
 ### Native (direkomendasikan untuk webcam)
 
 1. Jalankan:

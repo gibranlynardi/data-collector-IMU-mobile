@@ -3,10 +3,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_request_actor, require_operator_access
 from app.core.config import get_settings
 from app.db.models import ArchiveUpload, FileArtifact
 from app.db.session import get_db
@@ -16,8 +17,9 @@ from app.schemas.artifacts import (
     ArtifactResponse,
     UploadInstructionsResponse,
 )
+from app.services.operator_audit import write_operator_action_audit
 
-router = APIRouter(tags=["artifacts"])
+router = APIRouter(tags=["artifacts"], dependencies=[Depends(require_operator_access)])
 DBSession = Annotated[Session, Depends(get_db)]
 
 
@@ -130,6 +132,7 @@ def mark_archive_uploaded(
     session_id: str,
     payload: ArchiveUploadMarkRequest,
     db: DBSession,
+    request: Request,
 ) -> ArchiveUploadStatusResponse:
     export_zip = _export_zip_path(session_id)
     if not export_zip.exists():
@@ -147,6 +150,19 @@ def mark_archive_uploaded(
     row.checksum = local_checksum
     db.commit()
     db.refresh(row)
+
+    operator_id, operator_type = get_request_actor(request)
+    write_operator_action_audit(
+        db,
+        operator_id=operator_id or "operator",
+        operator_type=operator_type or "operator",
+        action="archive.mark_uploaded",
+        session_id=session_id,
+        target_type="archive_upload",
+        target_id=session_id,
+        details={"uploaded_by": row.uploaded_by, "remote_path": row.remote_path},
+    )
+    db.commit()
 
     return ArchiveUploadStatusResponse(
         session_id=row.session_id,

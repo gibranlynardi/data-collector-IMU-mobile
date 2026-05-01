@@ -4,9 +4,11 @@ from sqlalchemy.orm import sessionmaker
 
 import app.db.session as db_session
 import app.main as main_app
+import app.api.routers.ws as ws_router
+import app.services.storage_monitor as storage_monitor_module
 from app.core.config import get_settings
 from app.db.base import Base
-from app.db.models import Device, Session as SessionModel, SessionDevice
+from app.db.models import Device, PreflightCheck, Session as SessionModel, SessionDevice
 from app.services.clock_sync import clock_sync_service
 from app.services.csv_writer import csv_writer_service
 from app.services.video_recorder import video_recorder_service
@@ -30,6 +32,8 @@ def test_start_session_emits_countdown_contract_event(tmp_path, monkeypatch) -> 
 
     db_session.engine = engine
     db_session.SessionLocal = testing_session_local
+    ws_router.SessionLocal = testing_session_local
+    storage_monitor_module.SessionLocal = testing_session_local
     main_app.engine = engine
 
     Base.metadata.create_all(bind=engine)
@@ -40,6 +44,14 @@ def test_start_session_emits_countdown_contract_event(tmp_path, monkeypatch) -> 
         db.add(Device(device_id=device_id, device_role="chest", connected=True))
         db.add(SessionModel(session_id=session_id, status="CREATED", preflight_passed=True))
         db.add(SessionDevice(session_id=session_id, device_id=device_id, required=True))
+        db.add(
+            PreflightCheck(
+                session_id=session_id,
+                check_name="preflight_overall",
+                passed=True,
+                details='{"overall_passed": true}',
+            )
+        )
         db.commit()
 
     monkeypatch.setattr("app.api.routers.sessions.run_startup_checks", lambda: {"backend_healthy": True, "webcam_available": True, "storage_path_writable": True})
@@ -84,8 +96,14 @@ def test_start_session_emits_countdown_contract_event(tmp_path, monkeypatch) -> 
     with TestClient(main_app.app) as client:
         with client.websocket_connect(f"/ws/dashboard/{session_id}") as dashboard_ws:
             snapshot = dashboard_ws.receive_json()
-            status = dashboard_ws.receive_json()
             assert snapshot["type"] == "DASHBOARD_SNAPSHOT"
+            status = None
+            for _ in range(4):
+                event = dashboard_ws.receive_json()
+                if event.get("type") == "VIDEO_RECORDER_STATUS":
+                    status = event
+                    break
+            assert status is not None
             assert status["type"] == "VIDEO_RECORDER_STATUS"
 
             response = client.post(f"/sessions/{session_id}/start")
