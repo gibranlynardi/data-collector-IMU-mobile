@@ -32,9 +32,8 @@ jobs:
           echo "flutter.sdk=$(dirname $(dirname $(which flutter)))" >> local.properties
         working-directory: mobile-app/android
 
-      - name: Clean and Build
+      - name: Build APK
         run: |
-          flutter clean
           flutter pub get
           flutter build apk --release --android-skip-build-dependency-validation
         working-directory: mobile-app
