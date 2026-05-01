@@ -30,12 +30,14 @@ jobs:
         run: flutter pub get
         working-directory: mobile-app
 
-      - name: Clean Project
-        run: flutter clean
+      - name: Hard Clean
+        run: |
+          flutter clean
+          flutter pub get
         working-directory: mobile-app
 
       - name: Build APK (Release)
-        run: flutter build apk --release --android-skip-build-dependency-validation
+        run: flutter build apk --release --android-skip-build-dependency-validation --no-shrink
         working-directory: mobile-app
 
       - name: Upload APK to GitHub Artifacts
