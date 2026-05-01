@@ -28,6 +28,7 @@ jobs:
       
       - name: Build APK
         run: |
+          flutter precache --android
           flutter pub get
           flutter build apk --release --android-skip-build-dependency-validation
         working-directory: mobile-app
