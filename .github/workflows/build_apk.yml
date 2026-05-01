@@ -1,11 +1,12 @@
 name: Build Flutter APK
 
 on:
-  workflow_dispatch: 
+  workflow_dispatch:
   push:
     branches: [ "main", "master" ]
     paths:
-      - 'mobile-app/**' 
+      - 'mobile-app/**'
+      - '.github/workflows/**'
 
 jobs:
   build:
@@ -25,16 +26,37 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-      
-      - name: Build APK
+
+      - name: Precache Flutter Android engine
+        run: flutter precache --android
+        working-directory: mobile-app
+
+      - name: Write local.properties
         run: |
-          flutter precache --android
-          flutter pub get
-          flutter build apk --release --android-skip-build-dependency-validation
+          FLUTTER_SDK=$(dirname $(dirname $(which flutter)))
+          echo "sdk.dir=$ANDROID_HOME"          > android/local.properties
+          echo "flutter.sdk=$FLUTTER_SDK"       >> android/local.properties
+          echo "flutter.buildMode=release"      >> android/local.properties
+          echo "flutter.versionCode=1"          >> android/local.properties
+          echo "flutter.versionName=1.0.0"      >> android/local.properties
+          echo "=== local.properties ==="
+          cat android/local.properties
+          echo "=== Flutter SDK exists? ==="
+          ls "$FLUTTER_SDK/packages/flutter_tools/gradle" | head -5
+        working-directory: mobile-app
+
+      - name: Flutter pub get
+        run: flutter pub get
+        working-directory: mobile-app
+
+      - name: Build APK (Gradle with stacktrace)
+        run: |
+          cd android
+          ./gradlew assembleRelease --stacktrace --warning-mode all
         working-directory: mobile-app
 
       - name: Upload APK to GitHub Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: sensor-logger-apk
-          path: mobile-app/build/app/outputs/flutter-apk/app-release.apk
+          path: mobile-app/build/app/outputs/apk/release/app-release.apk
