@@ -30,6 +30,10 @@ jobs:
         run: flutter pub get
         working-directory: mobile-app
 
+      - name: Clean Build
+        run: flutter clean
+        working-directory: mobile-app
+
       - name: Build APK (Release)
         run: flutter build apk --release --android-skip-build-dependency-validation
         working-directory: mobile-app
