@@ -51,6 +51,7 @@ jobs:
 
       - name: Build APK (Gradle with stacktrace)
         run: |
+          chmod +x android/gradlew
           cd android
           ./gradlew assembleRelease --stacktrace --warning-mode all
         working-directory: mobile-app
