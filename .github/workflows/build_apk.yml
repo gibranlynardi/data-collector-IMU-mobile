@@ -26,12 +26,6 @@ jobs:
         with:
           channel: 'stable'
       
-      - name: Create local.properties
-        run: |
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
-          echo "flutter.sdk=$(dirname $(dirname $(which flutter)))" >> local.properties
-        working-directory: mobile-app/android
-
       - name: Build APK
         run: |
           flutter pub get
