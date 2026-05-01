@@ -6,15 +6,18 @@ pluginManagement {
             localPropsFile.withInputStream { properties.load(it) }
         }
         def path = properties.getProperty("flutter.sdk")
-        if (path == null || path.trim().isEmpty()) {
+        if (path == null || path.trim().isEmpty() || !new File(path.trim()).exists()) {
             // Fallback: locate flutter binary from PATH (used in CI)
             def isWindows = System.getProperty("os.name").toLowerCase().contains("windows")
             def cmd = isWindows ? ["cmd", "/c", "where flutter"] : ["which", "flutter"]
             def proc = cmd.execute()
             proc.waitFor()
-            def flutterBin = proc.text.trim().readLines().first().trim()
-            if (flutterBin) {
-                path = new File(flutterBin).parentFile?.parentFile?.absolutePath
+            def lines = proc.text.trim().readLines()
+            if (!lines.isEmpty()) {
+                def flutterBin = lines.first().trim()
+                if (flutterBin) {
+                    path = new File(flutterBin).parentFile?.parentFile?.absolutePath
+                }
             }
         }
         assert path != null && !path.trim().isEmpty(),
