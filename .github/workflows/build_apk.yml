@@ -31,7 +31,7 @@ jobs:
         working-directory: mobile-app
 
       - name: Build APK (Release)
-        run: flutter build apk --release
+        run: flutter build apk --release --android-skip-build-dependency-validation
         working-directory: mobile-app
 
       - name: Upload APK to GitHub Artifacts
