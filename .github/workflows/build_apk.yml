@@ -49,6 +49,10 @@ jobs:
         run: flutter pub get
         working-directory: mobile-app
 
+      - name: Generate Gradle wrapper jar
+        run: gradle wrapper --gradle-version 8.5 --distribution-type all
+        working-directory: mobile-app/android
+
       - name: Build APK (Gradle with stacktrace)
         run: |
           chmod +x android/gradlew
