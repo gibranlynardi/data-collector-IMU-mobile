@@ -25,19 +25,25 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+      
+      - name: Create local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          echo "flutter.sdk=$FLUTTER_ROOT" >> local.properties
+        working-directory: mobile-app/android
 
       - name: Install Dependencies
         run: flutter pub get
         working-directory: mobile-app
 
-      - name: Hard Clean
+      - name: Force Clean & Refresh
         run: |
           flutter clean
           flutter pub get
         working-directory: mobile-app
 
       - name: Build APK (Release)
-        run: flutter build apk --release --android-skip-build-dependency-validation --no-shrink
+        run: flutter build apk --release --android-skip-build-dependency-validation
         working-directory: mobile-app
 
       - name: Upload APK to GitHub Artifacts
