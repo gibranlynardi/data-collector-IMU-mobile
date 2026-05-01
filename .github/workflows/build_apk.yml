@@ -32,20 +32,12 @@ jobs:
           echo "flutter.sdk=$FLUTTER_ROOT" >> local.properties
         working-directory: mobile-app/android
 
-      - name: Install Dependencies
-        run: flutter pub get
-        working-directory: mobile-app
-
       - name: Clean and Build
         run: |
           flutter clean
+          flutter pub get
+          flutter build apk --release --android-skip-build-dependency-validation
         working-directory: mobile-app
-
-      - name: Build APK (Release)
-        run: flutter build apk --release --android-skip-build-dependency-validation
-        working-directory: mobile-app
-        env:
-          FLUTTER_ROOT: ${{ env.FLUTTER_ROOT }}
 
       - name: Upload APK to GitHub Artifacts
         uses: actions/upload-artifact@v4
