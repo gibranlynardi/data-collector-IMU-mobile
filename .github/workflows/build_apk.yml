@@ -49,10 +49,17 @@ jobs:
         run: flutter pub get
         working-directory: mobile-app
 
-      - name: Build APK
+      - name: Inspect Flutter Gradle plugin structure
         run: |
+          echo "=== Flutter Gradle plugin dir ==="
+          ls $FLUTTER_ROOT/packages/flutter_tools/gradle/
+          echo "=== releaseCompileClasspath ==="
           chmod +x android/gradlew
-          flutter build apk --release
+          ./android/gradlew :app:dependencies --configuration releaseCompileClasspath 2>&1 | grep -E "flutter|io\.flutter|FAILED|Could not|classpath" | head -40 || true
+        working-directory: mobile-app
+
+      - name: Build APK
+        run: flutter build apk --release
         working-directory: mobile-app
 
       - name: Upload APK to GitHub Artifacts
