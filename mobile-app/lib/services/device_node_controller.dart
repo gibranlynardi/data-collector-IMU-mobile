@@ -235,6 +235,10 @@ class DeviceNodeController extends ChangeNotifier {
     if (_state.connected) {
       return;
     }
+    if (_config.backendBaseUrl.trim().isEmpty) {
+      _setInfo('backend URL not set');
+      return;
+    }
     try {
       await _backendClient.registerDevice(_config);
       _socket = _socketClient.connect(_buildWsUri());

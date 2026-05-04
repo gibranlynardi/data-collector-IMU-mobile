@@ -26,19 +26,21 @@ class BackendClient implements BackendClientPort {
 
   Future<void> registerDevice(NodeConfig config) async {
     final uri = Uri.parse('${config.backendBaseUrl}/devices/register');
-    final response = await _client.post(
-      uri,
-      headers: {
-        'Content-Type': 'application/json',
-        if (config.enrollmentToken.trim().isNotEmpty) 'X-Device-Enrollment-Token': config.enrollmentToken.trim(),
-        if (config.deviceId.trim().isNotEmpty) 'X-Device-Id': config.deviceId.trim(),
-      },
-      body: jsonEncode({
-        'device_id': config.deviceId,
-        'device_role': config.deviceRole,
-        'display_name': config.displayName,
-      }),
-    );
+    final response = await _client
+        .post(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            if (config.enrollmentToken.trim().isNotEmpty) 'X-Device-Enrollment-Token': config.enrollmentToken.trim(),
+            if (config.deviceId.trim().isNotEmpty) 'X-Device-Id': config.deviceId.trim(),
+          },
+          body: jsonEncode({
+            'device_id': config.deviceId,
+            'device_role': config.deviceRole,
+            'display_name': config.displayName,
+          }),
+        )
+        .timeout(const Duration(seconds: 5));
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('register device gagal: ${response.statusCode} ${response.body}');
@@ -56,23 +58,25 @@ class BackendClient implements BackendClientPort {
     double? jitterP99Ms,
   }) async {
     final uri = Uri.parse('${config.backendBaseUrl}/devices/${config.deviceId}');
-    final response = await _client.patch(
-      uri,
-      headers: {
-        'Content-Type': 'application/json',
-        if (config.enrollmentToken.trim().isNotEmpty) 'X-Device-Enrollment-Token': config.enrollmentToken.trim(),
-        if (config.deviceId.trim().isNotEmpty) 'X-Device-Id': config.deviceId.trim(),
-      },
-      body: jsonEncode({
-        'connected': connected,
-        'recording': recording,
-        'battery_percent': batteryPercent,
-        'storage_free_mb': storageFreeMb,
-        'effective_hz': effectiveHz,
-        'interval_p99_ms': intervalP99Ms,
-        'jitter_p99_ms': jitterP99Ms,
-      }),
-    );
+    final response = await _client
+        .patch(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            if (config.enrollmentToken.trim().isNotEmpty) 'X-Device-Enrollment-Token': config.enrollmentToken.trim(),
+            if (config.deviceId.trim().isNotEmpty) 'X-Device-Id': config.deviceId.trim(),
+          },
+          body: jsonEncode({
+            'connected': connected,
+            'recording': recording,
+            'battery_percent': batteryPercent,
+            'storage_free_mb': storageFreeMb,
+            'effective_hz': effectiveHz,
+            'interval_p99_ms': intervalP99Ms,
+            'jitter_p99_ms': jitterP99Ms,
+          }),
+        )
+        .timeout(const Duration(seconds: 5));
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('patch device gagal: ${response.statusCode} ${response.body}');
