@@ -595,11 +595,6 @@ class DeviceNodeController extends ChangeNotifier {
       seq: _seq,
       frame: frame,
     );
-
-    final pending = await _localStore.pendingCount(sessionId: sessionId, deviceId: _config.deviceId);
-    final total = await _localStore.totalSampleCount(sessionId: sessionId, deviceId: _config.deviceId);
-    _state = _state.copyWith(pendingSamples: pending, localSamples: total, lastSeq: _seq);
-    notifyListeners();
   }
 
   double _computeP99IntervalMs() {
