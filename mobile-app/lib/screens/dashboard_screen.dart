@@ -73,7 +73,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _saveConfig() async {
-    final wsPort = int.tryParse(_wsPortController.text.trim()) ?? 8001;
+    final wsPort = int.tryParse(_wsPortController.text.trim()) ?? 8000;
     final nextConfig = NodeConfig(
       backendBaseUrl: _backendController.text.trim(),
       wsPort: wsPort,
