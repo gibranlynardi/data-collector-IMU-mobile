@@ -49,14 +49,10 @@ jobs:
         run: flutter pub get
         working-directory: mobile-app
 
-      - name: Generate Gradle wrapper jar
-        run: gradle wrapper --gradle-version 8.9 --distribution-type all
-        working-directory: mobile-app/android
-
       - name: Build APK
         run: |
           chmod +x android/gradlew
-          flutter build apk --release -v
+          flutter build apk --release
         working-directory: mobile-app
 
       - name: Upload APK to GitHub Artifacts
