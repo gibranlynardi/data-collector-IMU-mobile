@@ -21,7 +21,11 @@ allprojects {
     }
 }
 
+rootProject.buildDir = '../build'
+
 subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+
     afterEvaluate { project ->
         if (project.hasProperty("android")) {
             project.android {
@@ -39,5 +43,5 @@ subprojects {
 }
 
 tasks.register("clean", Delete) {
-    delete layout.buildDirectory
+    delete rootProject.buildDir
 }
