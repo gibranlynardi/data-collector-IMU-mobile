@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 
 import 'package:battery_plus/battery_plus.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -750,16 +751,29 @@ class DeviceNodeController extends ChangeNotifier {
   }
 
   Future<void> _pushDeviceStatus() async {
-    if (_config.backendBaseUrl.trim().isEmpty) return;
+    if (_config.backendBaseUrl.trim().isEmpty) {
+      developer.log('skip: backendBaseUrl empty', name: 'DeviceNode.statusPush');
+      return;
+    }
+    final sw = Stopwatch()..start();
+    developer.log(
+      'begin device=${_config.deviceId} url=${_config.effectiveBaseUrl} '
+      'connected=${_state.connected} recording=${_state.recording}',
+      name: 'DeviceNode.statusPush',
+    );
     try {
       int? battery;
       int? storageFreeMb;
       try {
         battery = await _batteryLevelProvider();
-      } catch (_) {}
+      } catch (e) {
+        developer.log('battery provider error: $e', name: 'DeviceNode.statusPush');
+      }
       try {
         storageFreeMb = await _storageFreeProvider();
-      } catch (_) {}
+      } catch (e) {
+        developer.log('storage provider error: $e', name: 'DeviceNode.statusPush');
+      }
       await _backendClient.patchDeviceStatus(
         config: _config,
         connected: _state.connected,
@@ -772,7 +786,14 @@ class DeviceNodeController extends ChangeNotifier {
       );
       _state = _state.copyWith(batteryPercent: battery, storageFreeMb: storageFreeMb);
       notifyListeners();
-    } catch (e) {
+      developer.log('ok took=${sw.elapsedMilliseconds}ms', name: 'DeviceNode.statusPush');
+    } catch (e, st) {
+      developer.log(
+        'FAIL took=${sw.elapsedMilliseconds}ms err=$e (type=${e.runtimeType})',
+        name: 'DeviceNode.statusPush',
+        error: e,
+        stackTrace: st,
+      );
       _setInfo('status push failed: $e');
     }
   }
