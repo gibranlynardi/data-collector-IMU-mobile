@@ -105,11 +105,11 @@ def store_preflight_overall(
 def is_preflight_passed(report: dict) -> bool:
     if "overall_passed" in report:
         return bool(report.get("overall_passed"))
-    return bool(
-        report.get("backend_healthy")
-        and report.get("storage_path_writable")
-        and report.get("webcam_available")
-    )
+    settings = get_settings()
+    base_ok = bool(report.get("backend_healthy") and report.get("storage_path_writable"))
+    if settings.webcam_required:
+        return base_ok and bool(report.get("webcam_available"))
+    return base_ok
 
 
 def store_preflight_report(db: Session, report: dict, session_id: str | None = None) -> None:

@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     session_finalize_min_samples_per_required_device: int = 100
     session_finalize_max_missing_gap_size: int = 50
     session_finalize_require_video: bool = True
+    webcam_required: bool = False
 
     fams_host: str = ""
     fams_user: str = ""

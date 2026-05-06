@@ -223,6 +223,7 @@ async def _run_session_preflight(db: Session, session: SessionModel) -> dict[str
     backend_healthy = bool(startup_report.get("backend_healthy", False))
     storage_ok = bool(startup_report.get("storage_path_writable", False))
     webcam_ok = bool(startup_report.get("webcam_available", False))
+    webcam_required = bool(settings.webcam_required)
     check_items.extend(
         [
             ("backend_healthy", backend_healthy, "FastAPI app startup check"),
@@ -231,7 +232,11 @@ async def _run_session_preflight(db: Session, session: SessionModel) -> dict[str
                 storage_ok,
                 f"free_bytes={int(startup_report.get('storage_free_bytes', 0) or 0)}",
             ),
-            ("webcam_available", webcam_ok, str(startup_report.get("webcam_detail", ""))),
+            (
+                "webcam_available",
+                True if not webcam_required else webcam_ok,
+                (str(startup_report.get("webcam_detail", "")) + (" (optional)" if not webcam_required else "")).strip(),
+            ),
         ]
     )
 
