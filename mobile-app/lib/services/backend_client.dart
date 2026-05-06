@@ -1,9 +1,18 @@
 import 'dart:convert';
 import 'dart:developer' as developer;
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 
 import '../models/node_config.dart';
+
+http.Client _buildDefaultClient() {
+  final inner = HttpClient()
+    ..idleTimeout = const Duration(seconds: 3)
+    ..connectionTimeout = const Duration(seconds: 5);
+  return IOClient(inner);
+}
 
 abstract class BackendClientPort {
   Future<void> registerDevice(NodeConfig config);
@@ -21,15 +30,27 @@ abstract class BackendClientPort {
 }
 
 class BackendClient implements BackendClientPort {
-  BackendClient({http.Client? client}) : _client = client ?? http.Client();
+  BackendClient({http.Client? client})
+      : _client = client ?? _buildDefaultClient(),
+        _ownsClient = client == null;
 
-  final http.Client _client;
+  http.Client _client;
+  final bool _ownsClient;
   int _reqSeq = 0;
 
   static const String _tag = 'BackendClient';
 
   void _log(String msg) {
     developer.log(msg, name: _tag);
+  }
+
+  void _rebuildClientIfOwned() {
+    if (!_ownsClient) return;
+    try {
+      _client.close();
+    } catch (_) {}
+    _client = _buildDefaultClient();
+    _log('http client rebuilt to drop stale pooled connections');
   }
 
   bool _isTransientNetworkError(Object e) {
@@ -62,7 +83,8 @@ class BackendClient implements BackendClientPort {
     } catch (e, st) {
       final ms = sw.elapsedMilliseconds;
       if (_isTransientNetworkError(e)) {
-        _log('[$reqId] $label TRANSIENT-NET-ERR after=${ms}ms err=$e -> retrying once');
+        _log('[$reqId] $label TRANSIENT-NET-ERR after=${ms}ms err=$e -> rebuilding client & retrying once');
+        _rebuildClientIfOwned();
         final sw2 = Stopwatch()..start();
         try {
           final r = await send().timeout(const Duration(seconds: 5));

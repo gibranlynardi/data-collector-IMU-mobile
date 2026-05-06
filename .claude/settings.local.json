@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter analyze *)",
+      "PowerShell(flutter analyze mobile-app/lib/services/backend_client.dart 2>&1)"
+    ]
+  }
+}
