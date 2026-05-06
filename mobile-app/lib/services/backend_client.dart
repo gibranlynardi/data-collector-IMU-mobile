@@ -25,7 +25,7 @@ class BackendClient implements BackendClientPort {
   final http.Client _client;
 
   Future<void> registerDevice(NodeConfig config) async {
-    final uri = Uri.parse('${config.backendBaseUrl}/devices/register');
+    final uri = Uri.parse('${config.effectiveBaseUrl}/devices/register');
     final response = await _client
         .post(
           uri,
@@ -57,7 +57,7 @@ class BackendClient implements BackendClientPort {
     double? intervalP99Ms,
     double? jitterP99Ms,
   }) async {
-    final uri = Uri.parse('${config.backendBaseUrl}/devices/${config.deviceId}');
+    final uri = Uri.parse('${config.effectiveBaseUrl}/devices/${config.deviceId}');
     final response = await _client
         .patch(
           uri,

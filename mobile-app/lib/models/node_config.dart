@@ -49,6 +49,17 @@ class NodeConfig {
     };
   }
 
+  /// Base URL with wsPort applied, so HTTP and WS always hit the same port.
+  /// Guards against the common misconfiguration where backendBaseUrl is set
+  /// without a port (e.g. "http://192.168.x.x") while wsPort is 8000.
+  String get effectiveBaseUrl {
+    if (backendBaseUrl.trim().isEmpty) return '';
+    final parsed = Uri.tryParse(backendBaseUrl);
+    if (parsed == null || parsed.host.isEmpty) return backendBaseUrl;
+    if (parsed.hasPort && parsed.port == wsPort) return backendBaseUrl;
+    return Uri(scheme: parsed.scheme, host: parsed.host, port: wsPort).toString();
+  }
+
   static NodeConfig fromJson(Map<String, dynamic> json) {
     return NodeConfig(
       backendBaseUrl: (json['backendBaseUrl'] as String? ?? '').trim(),

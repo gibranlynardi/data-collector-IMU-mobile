@@ -1,0 +1,103 @@
+Run chmod +x android/gradlew
+  chmod +x android/gradlew
+  flutter build apk --release
+  shell: /usr/bin/bash -e {0}
+  env:
+    JAVA_HOME: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+    JAVA_HOME_17_X64: /opt/hostedtoolcache/Java_Zulu_jdk/17.0.19-10/x64
+    FLUTTER_ROOT: /opt/hostedtoolcache/flutter/stable-3.41.9-x64/flutter
+    PUB_CACHE: /home/runner/.pub-cache
+  
+Running Gradle task 'assembleRelease'...                        
+Font asset "MaterialIcons-Regular.otf" was tree-shaken, reducing it from 1645184 to 1420 bytes (99.9% reduction). Tree-shaking can be disabled by providing the --no-tree-shake-icons flag when building your app.
+Checking the license for package CMake 3.22.1 in /usr/local/lib/android/sdk/licenses
+License for package CMake 3.22.1 accepted.
+Preparing "Install CMake 3.22.1 v.3.22.1".
+"Install CMake 3.22.1 v.3.22.1" ready.
+Installing CMake 3.22.1 in /usr/local/lib/android/sdk/cmake/3.22.1
+"Install CMake 3.22.1 v.3.22.1" complete.
+"Install CMake 3.22.1 v.3.22.1" finished.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:9:8 Unresolved reference 'io'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:10:8 Unresolved reference 'io'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:11:8 Unresolved reference 'io'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:13:21 Unresolved reference 'FlutterActivity'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:16:2 'configureFlutterEngine' overrides nothing.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:16:53 Unresolved reference 'FlutterEngine'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:17:3 Unresolved reference 'FlutterActivity'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:17:9 Unresolved reference 'configureFlutterEngine'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:18:3 Unresolved reference 'MethodChannel'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:18:31 Unresolved reference 'dartExecutor'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:18:104 Cannot infer type for this parameter. Please specify it explicitly.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:18:110 Cannot infer type for this parameter. Please specify it explicitly.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:19:13 Unresolved reference 'method'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:20:5 Argument type mismatch: actual type is 'K#2 (type parameter of fun <K> TRY_CALL(vararg branches: K): K)', but 'K#1 (type parameter of fun <K> WHEN_CALL(vararg branches: K): K)' was expected.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:24:13 Unresolved reference 'success'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:26:13 Unresolved reference 'error'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:29:12 Unresolved reference 'notImplemented'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:33:3 Unresolved reference 'MethodChannel'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:33:31 Unresolved reference 'dartExecutor'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:33:104 Cannot infer type for this parameter. Please specify it explicitly.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:33:110 Cannot infer type for this parameter. Please specify it explicitly.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:34:15 Unresolved reference 'method'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:36:6 Argument type mismatch: actual type is 'K#2 (type parameter of fun <K> TRY_CALL(vararg branches: K): K)', but 'K#1 (type parameter of fun <K> WHEN_CALL(vararg branches: K): K)' was expected.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:37:24 Unresolved reference 'argument'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:38:23 Unresolved reference 'argument'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:39:20 None of the following candidates is applicable:
+constructor(p0: String!, p1: Uri!): Intent
+constructor(p0: Context!, p1: Class<*>!): Intent
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:39:67 Cannot infer type for this parameter. Please specify it explicitly.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:39:67 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+fun <T> T.apply(block: T.() -> Unit): T
+    [R|Contract description]
+     <
+        CallsInPlace(block, EXACTLY_ONCE)
+    >
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:39:73 Cannot infer type for this parameter. Please specify it explicitly.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:40:8 Unresolved reference 'action'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:41:8 Unresolved reference 'putExtra'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:42:8 Unresolved reference 'putExtra'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:44:7 Unresolved reference 'startForegroundService'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:45:14 Unresolved reference 'success'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:47:14 Unresolved reference 'error'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:51:6 Argument type mismatch: actual type is 'K#2 (type parameter of fun <K> TRY_CALL(vararg branches: K): K)', but 'K#1 (type parameter of fun <K> WHEN_CALL(vararg branches: K): K)' was expected.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:52:20 None of the following candidates is applicable:
+constructor(p0: String!, p1: Uri!): Intent
+constructor(p0: Context!, p1: Class<*>!): Intent
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:52:67 Cannot infer type for this parameter. Please specify it explicitly.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:52:67 Unresolved reference. None of the following candidates is applicable because of a receiver type mismatch:
+fun <T> T.apply(block: T.() -> Unit): T
+    [R|Contract description]
+     <
+        CallsInPlace(block, EXACTLY_ONCE)
+    >
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:52:73 Cannot infer type for this parameter. Please specify it explicitly.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:53:8 Unresolved reference 'action'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:55:7 Unresolved reference 'startService'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:56:14 Unresolved reference 'success'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:58:14 Unresolved reference 'error'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:62:6 Argument type mismatch: actual type is 'K#2 (type parameter of fun <K> TRY_CALL(vararg branches: K): K)', but 'K#1 (type parameter of fun <K> WHEN_CALL(vararg branches: K): K)' was expected.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:63:16 Unresolved reference 'getSystemService'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:63:33 Unresolved reference 'POWER_SERVICE'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:64:14 Unresolved reference 'success'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:64:56 Unresolved reference 'packageName'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:66:14 Unresolved reference 'error'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:70:6 Argument type mismatch: actual type is 'K#2 (type parameter of fun <K> TRY_CALL(vararg branches: K): K)', but 'K#1 (type parameter of fun <K> WHEN_CALL(vararg branches: K): K)' was expected.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:72:35 Unresolved reference 'packageName'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:75:7 Unresolved reference 'startActivity'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:76:14 Unresolved reference 'success'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:78:14 Unresolved reference 'error'.
+e: file:///home/runner/work/data-collector-IMU-mobile/data-collector-IMU-mobile/mobile-app/android/app/src/main/kotlin/com/example/sensors_app/MainActivity.kt:81:20 Unresolved reference 'notImplemented'.
+FAILURE: Build failed with an exception.
+* What went wrong:
+Execution failed for task ':app:compileReleaseKotlin'.
+> A failure occurred while executing org.jetbrains.kotlin.compilerRunner.GradleCompilerRunnerWithWorkers$GradleKotlinCompilerWorkAction
+   > Compilation error. See log for more details
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.
+BUILD FAILED in 2m 37s
+Running Gradle task 'assembleRelease'...                          158.1s
+Gradle task assembleRelease failed with exit code 1
+Error: Process completed with exit code 1.

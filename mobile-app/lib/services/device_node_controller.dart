@@ -318,6 +318,9 @@ class DeviceNodeController extends ChangeNotifier {
   }
 
   void _onWsDone() {
+    _heartbeatTimer?.cancel();
+    _uploaderTimer?.cancel();
+    _statusPushTimer?.cancel();
     if (_state.connected) {
       _state = _state.copyWith(connected: false, recording: _sensorSampler.isRunning, lastInfo: 'ws disconnected');
       notifyListeners();
@@ -747,14 +750,21 @@ class DeviceNodeController extends ChangeNotifier {
   }
 
   Future<void> _pushDeviceStatus() async {
+    if (_config.backendBaseUrl.trim().isEmpty) return;
     try {
-      final battery = await _batteryLevelProvider();
-      final storageFreeMb = await _storageFreeProvider();
+      int? battery;
+      int? storageFreeMb;
+      try {
+        battery = await _batteryLevelProvider();
+      } catch (_) {}
+      try {
+        storageFreeMb = await _storageFreeProvider();
+      } catch (_) {}
       await _backendClient.patchDeviceStatus(
         config: _config,
         connected: _state.connected,
         recording: _state.recording,
-        batteryPercent: battery.toDouble(),
+        batteryPercent: battery?.toDouble(),
         storageFreeMb: storageFreeMb,
         effectiveHz: _state.effectiveHz,
         intervalP99Ms: _state.intervalP99Ms,

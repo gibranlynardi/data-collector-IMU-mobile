@@ -402,8 +402,10 @@ async def _handle_text_message(
     msg_type = str(payload.get("type", ""))
     if msg_type == "HEARTBEAT":
         resolved_session_id = _resolve_session_id_for_message(context, payload.get("session_id"))
-        if resolved_session_id is not None:
-            await ws_runtime.touch_heartbeat(resolved_session_id, context.device_id)
+        # Always touch heartbeat — fall back to "" for session-less connections so the
+        # timeout loop doesn't evict a device that is actively sending heartbeats.
+        heartbeat_session_id = resolved_session_id if resolved_session_id is not None else (context.session_id or "")
+        await ws_runtime.touch_heartbeat(heartbeat_session_id, context.device_id)
         await _send_json(
             websocket,
             {
