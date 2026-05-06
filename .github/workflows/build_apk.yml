@@ -59,7 +59,7 @@ jobs:
         working-directory: mobile-app
 
       - name: Build APK
-        run: flutter build apk --release
+        run: flutter build apk --release -v
         working-directory: mobile-app
 
       - name: Upload APK to GitHub Artifacts
