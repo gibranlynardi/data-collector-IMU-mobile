@@ -51,7 +51,7 @@ class NodeConfig {
 
   static NodeConfig fromJson(Map<String, dynamic> json) {
     return NodeConfig(
-      backendBaseUrl: (json['backendBaseUrl'] as String? ?? 'http://127.0.0.1:8000').trim(),
+      backendBaseUrl: (json['backendBaseUrl'] as String? ?? '').trim(),
       wsPort: (json['wsPort'] as int? ?? 8000),
       deviceId: (json['deviceId'] as String? ?? 'DEVICE-OTHER-001').trim().toUpperCase(),
       deviceRole: (json['deviceRole'] as String? ?? 'other').trim().toLowerCase(),
@@ -63,7 +63,7 @@ class NodeConfig {
 
   static NodeConfig defaults() {
     return const NodeConfig(
-      backendBaseUrl: 'http://127.0.0.1:8000',
+      backendBaseUrl: '',
       wsPort: 8000,
       deviceId: 'DEVICE-OTHER-001',
       deviceRole: 'other',

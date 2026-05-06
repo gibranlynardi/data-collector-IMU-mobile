@@ -1,0 +1,69 @@
+name: Build Flutter APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main", "master" ]
+    paths:
+      - 'mobile-app/**'
+      - '.github/workflows/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Precache Flutter Android engine
+        run: flutter precache --android
+        working-directory: mobile-app
+
+      - name: Write local.properties
+        run: |
+          FLUTTER_SDK=$(dirname $(dirname $(which flutter)))
+          echo "sdk.dir=$ANDROID_HOME"          > android/local.properties
+          echo "flutter.sdk=$FLUTTER_SDK"       >> android/local.properties
+          echo "flutter.buildMode=release"      >> android/local.properties
+          echo "flutter.versionCode=1"          >> android/local.properties
+          echo "flutter.versionName=1.0.0"      >> android/local.properties
+          echo "=== local.properties ==="
+          cat android/local.properties
+          echo "=== Flutter SDK exists? ==="
+          ls "$FLUTTER_SDK/packages/flutter_tools/gradle" | head -5
+        working-directory: mobile-app
+
+      - name: Flutter pub get
+        run: flutter pub get
+        working-directory: mobile-app
+
+      - name: Inspect Flutter Gradle plugin structure
+        run: |
+          echo "=== Flutter Gradle plugin dir ==="
+          ls $FLUTTER_ROOT/packages/flutter_tools/gradle/
+          echo "=== releaseCompileClasspath ==="
+          chmod +x android/gradlew
+          ./android/gradlew :app:dependencies --configuration releaseCompileClasspath 2>&1 | grep -E "flutter|io\.flutter|FAILED|Could not|classpath" | head -40 || true
+        working-directory: mobile-app
+
+      - name: Build APK
+        run: flutter build apk --release
+        working-directory: mobile-app
+
+      - name: Upload APK to GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sensor-logger-apk
+          path: mobile-app/build/app/outputs/flutter-apk/app-release.apk

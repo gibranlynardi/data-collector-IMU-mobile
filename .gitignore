@@ -67,6 +67,13 @@ __pycache__/
 *.seed
 *.lock
 
+# =========================
+# Android / Flutter
+# =========================
+mobile-app/android/local.properties
+mobile-app/.dart_tool/
+mobile-app/build/
+
 # Runtime artifacts
 /data/
 /backend/data/

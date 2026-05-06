@@ -235,6 +235,10 @@ class DeviceNodeController extends ChangeNotifier {
     if (_state.connected) {
       return;
     }
+    if (_config.backendBaseUrl.trim().isEmpty) {
+      _setInfo('backend URL not set');
+      return;
+    }
     try {
       await _backendClient.registerDevice(_config);
       _socket = _socketClient.connect(_buildWsUri());
@@ -595,11 +599,6 @@ class DeviceNodeController extends ChangeNotifier {
       seq: _seq,
       frame: frame,
     );
-
-    final pending = await _localStore.pendingCount(sessionId: sessionId, deviceId: _config.deviceId);
-    final total = await _localStore.totalSampleCount(sessionId: sessionId, deviceId: _config.deviceId);
-    _state = _state.copyWith(pendingSamples: pending, localSamples: total, lastSeq: _seq);
-    notifyListeners();
   }
 
   double _computeP99IntervalMs() {
