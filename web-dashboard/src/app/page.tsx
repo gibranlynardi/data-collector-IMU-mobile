@@ -74,6 +74,7 @@ const OPERATOR_WS_ID = process.env.NEXT_PUBLIC_OPERATOR_ID ?? "dashboard-web";
 const PREVIEW_WINDOW_MS = 30_000;
 const SAMPLING_HISTORY_LIMIT = 96;
 const SAMPLING_TARGET_INTERVAL_MS = 10;
+const MOCK_DEVICE_ID = "mock-imu-01";
 
 function buildWsBase(apiBase: string, wsPort: number | null): string {
   if (WS_BASE_OVERRIDE && WS_BASE_OVERRIDE.trim()) {
@@ -130,6 +131,11 @@ function secondsToClock(seconds: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 
+function formatLiveValue(value: number | null | undefined, digits: number): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "--";
+  return value.toFixed(digits);
+}
+
 function parseIsoTimestamp(value: string): number | null {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -160,17 +166,21 @@ function sparkline(points: number[], width = 280, height = 84): string {
     .join(" ");
 }
 
-function sharedSparkline(series: number[][], width = 600, height = 180): string[] {
+function sharedSparkline(series: number[][], width = 600, height = 180, paddingRatio = 0.15): string[] {
   const flat = series.flat();
   if (flat.length === 0) return series.map(() => "");
   const min = Math.min(...flat);
   const max = Math.max(...flat);
   const span = Math.max(1e-6, max - min);
+  const padding = span * paddingRatio;
+  const minBound = min - padding;
+  const maxBound = max + padding;
+  const spanBound = Math.max(1e-6, maxBound - minBound);
   return series.map((points) =>
     points
       .map((point, index) => {
         const x = (index / Math.max(1, points.length - 1)) * width;
-        const y = height - ((point - min) / span) * height;
+        const y = height - ((point - minBound) / spanBound) * height;
         return `${x.toFixed(1)},${y.toFixed(1)}`;
       })
       .join(" "),
@@ -318,7 +328,26 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const activeTabRef = useRef<Tab>(activeTab);
   const [liveDeviceId, setLiveDeviceId] = useState("");
-  const [liveSignalMode, setLiveSignalMode] = useState<"acc" | "gyro">("acc");
+  const [mockEnabled, setMockEnabled] = useState(false);
+  const mockPhaseRef = useRef(0);
+  const mockDeviceBase = useMemo<DeviceResponse>(
+    () => ({
+      device_id: MOCK_DEVICE_ID,
+      device_role: "mock",
+      display_name: "Mock IMU",
+      ip_address: "127.0.0.1",
+      connected: true,
+      recording: false,
+      battery_percent: 86,
+      storage_free_mb: 1024,
+      effective_hz: 100,
+      interval_p99_ms: 10,
+      jitter_p99_ms: 2,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }),
+    [],
+  );
 
   const selectedSession = sessionId.trim();
   const activeAnnotations = annotations.filter((item) => !item.ended_at && !item.deleted);
@@ -357,11 +386,28 @@ export default function Home() {
     [requiredBindings.length, requiredOnlineCount],
   );
 
-  const onlineDevices = useMemo(() => devices.filter((item) => item.connected).length, [devices]);
+  const devicesForUi = useMemo(() => {
+    if (!mockEnabled) return devices;
+    const hasMock = devices.some((item) => item.device_id === MOCK_DEVICE_ID);
+    const mockDevice: DeviceResponse = {
+      ...mockDeviceBase,
+      recording: session?.status === "running",
+      updated_at: new Date().toISOString(),
+    };
+    return hasMock
+      ? devices.map((item) => (item.device_id === MOCK_DEVICE_ID ? mockDevice : item))
+      : [mockDevice, ...devices];
+  }, [devices, mockDeviceBase, mockEnabled, session?.status]);
+
+  const onlineDevices = useMemo(
+    () => devicesForUi.filter((item) => item.connected).length,
+    [devicesForUi],
+  );
   const liveDeviceIds = useMemo(() => Object.keys(previewByDevice), [previewByDevice]);
   const activeLiveDeviceId = liveDeviceId || liveDeviceIds[0] || "";
   const livePoints = activeLiveDeviceId ? previewByDevice[activeLiveDeviceId] ?? [] : [];
-  const liveHz = devices.find((item) => item.device_id === activeLiveDeviceId)?.effective_hz ?? null;
+  const liveHz = devicesForUi.find((item) => item.device_id === activeLiveDeviceId)?.effective_hz ?? null;
+  const latestLiveSample = useMemo(() => livePoints.at(-1) ?? null, [livePoints]);
 
   const [accXLine, accYLine, accZLine] = useMemo(() => {
     const series = [
@@ -381,11 +427,46 @@ export default function Home() {
     return sharedSparkline(series, 640, 200);
   }, [livePoints]);
 
-  const liveLines = liveSignalMode === "acc" ? [accXLine, accYLine, accZLine] : [gyroXLine, gyroYLine, gyroZLine];
 
   useEffect(() => {
     activeTabRef.current = activeTab;
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!mockEnabled) {
+      setPreviewByDevice((prev) => {
+        if (!prev[MOCK_DEVICE_ID]) return prev;
+        const next = { ...prev };
+        delete next[MOCK_DEVICE_ID];
+        return next;
+      });
+      return;
+    }
+
+    setPreviewByDevice((prev) => (prev[MOCK_DEVICE_ID] ? prev : { ...prev, [MOCK_DEVICE_ID]: [] }));
+
+    const interval = globalThis.setInterval(() => {
+      if (activeTabRef.current !== "live") return;
+      const phase = mockPhaseRef.current;
+      mockPhaseRef.current += 0.18;
+      const accX = Math.sin(phase) * 0.6 + Math.sin(phase * 0.2) * 0.2;
+      const accY = Math.cos(phase * 0.9) * 0.5;
+      const accZ = Math.sin(phase * 1.1 + 1.2) * 0.4;
+      const gyroX = Math.sin(phase * 0.7) * 40;
+      const gyroY = Math.cos(phase * 0.8 + 0.6) * 35;
+      const gyroZ = Math.sin(phase * 1.3) * 30;
+      const now = Date.now();
+      setPreviewByDevice((prev) => {
+        const current = prev[MOCK_DEVICE_ID] ?? [];
+        const next = [...current, { x: now, accX, accY, accZ, gyroX, gyroY, gyroZ }].filter(
+          (item) => now - item.x <= PREVIEW_WINDOW_MS,
+        );
+        return { ...prev, [MOCK_DEVICE_ID]: next };
+      });
+    }, 120);
+
+    return () => globalThis.clearInterval(interval);
+  }, [mockEnabled]);
 
   useEffect(() => {
     if (!liveDeviceIds.length) {
@@ -966,7 +1047,7 @@ export default function Home() {
                       Recording <span className="font-semibold text-[color:var(--foreground)]">{session?.status ?? "idle"}</span>
                     </span>
                     <span>
-                      Devices Online <span className="font-semibold text-[color:var(--foreground)]">{onlineDevices}/{devices.length}</span>
+                      Devices Online <span className="font-semibold text-[color:var(--foreground)]">{onlineDevices}/{devicesForUi.length}</span>
                     </span>
                     <span>
                       Active Annotations <span className="font-semibold text-[color:var(--foreground)]">{activeAnnotations.length}</span>
@@ -993,53 +1074,72 @@ export default function Home() {
                         ))
                       )}
                     </select>
+                    <label className="flex items-center gap-2 text-[11px] text-[color:var(--text-faint)]">
+                      <input
+                        type="checkbox"
+                        checked={mockEnabled}
+                        onChange={(event) => setMockEnabled(event.target.checked)}
+                      />
+                      Mock device
+                    </label>
                     <div className="ml-auto flex items-center gap-3 text-[11px] text-[color:var(--text-faint)]">
                       <span>Hz {liveHz !== null ? liveHz.toFixed(1) : "-"}</span>
                       <span>Window 30s</span>
                     </div>
                   </div>
 
-                  <div className="mt-2 inline-flex rounded-full border border-[color:var(--stroke)] bg-[color:var(--surface-2)] p-0.5 text-xs">
-                    <button
-                      onClick={() => setLiveSignalMode("acc")}
-                      className={`rounded-full px-3 py-1 font-medium transition-colors ${
-                        liveSignalMode === "acc"
-                          ? "bg-[color:var(--surface)] text-[color:var(--foreground)]"
-                          : "text-[color:var(--text-faint)]"
-                      }`}
-                    >
-                      ACC
-                    </button>
-                    <button
-                      onClick={() => setLiveSignalMode("gyro")}
-                      className={`rounded-full px-3 py-1 font-medium transition-colors ${
-                        liveSignalMode === "gyro"
-                          ? "bg-[color:var(--surface)] text-[color:var(--foreground)]"
-                          : "text-[color:var(--text-faint)]"
-                      }`}
-                    >
-                      GYRO
-                    </button>
-                  </div>
+                  <div className="mt-3 grid gap-3">
+                    <div className="rounded-2xl border border-[color:var(--stroke)] bg-[#0b1220] px-2 py-3">
+                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#a7b2c4]">ACC</p>
+                      <div className="mb-2 grid grid-cols-3 gap-2 text-[11px] text-[#a7b2c4]">
+                        <span>X {formatLiveValue(latestLiveSample?.accX, 3)} g</span>
+                        <span>Y {formatLiveValue(latestLiveSample?.accY, 3)} g</span>
+                        <span>Z {formatLiveValue(latestLiveSample?.accZ, 3)} g</span>
+                      </div>
+                      {livePoints.length === 0 ? (
+                        <p className="text-sm text-[#a7b2c4]">Belum ada preview stream.</p>
+                      ) : (
+                        <svg viewBox="0 0 640 180" className="h-44 w-full">
+                          <line x1="0" y1="45" x2="640" y2="45" stroke="#1f2937" strokeWidth="1" />
+                          <line x1="0" y1="90" x2="640" y2="90" stroke="#1f2937" strokeWidth="1" />
+                          <line x1="0" y1="135" x2="640" y2="135" stroke="#1f2937" strokeWidth="1" />
+                          <polyline fill="none" stroke="#7fb4ff" strokeWidth="2" points={accXLine} />
+                          <polyline fill="none" stroke="#5fd6b5" strokeWidth="2" points={accYLine} />
+                          <polyline fill="none" stroke="#f4d96b" strokeWidth="2" points={accZLine} />
+                        </svg>
+                      )}
+                      <div className="mt-2 flex items-center gap-3 text-[10px] text-[#a7b2c4]">
+                        <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#7fb4ff]" />X</span>
+                        <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#5fd6b5]" />Y</span>
+                        <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#f4d96b]" />Z</span>
+                      </div>
+                    </div>
 
-                  <div className="mt-3 rounded-2xl border border-[color:var(--stroke)] bg-[#0b1220] p-3">
-                    {livePoints.length === 0 ? (
-                      <p className="text-sm text-[#a7b2c4]">Belum ada preview stream.</p>
-                    ) : (
-                      <svg viewBox="0 0 640 200" className="h-52 w-full">
-                        <line x1="0" y1="50" x2="640" y2="50" stroke="#1f2937" strokeWidth="1" />
-                        <line x1="0" y1="100" x2="640" y2="100" stroke="#1f2937" strokeWidth="1" />
-                        <line x1="0" y1="150" x2="640" y2="150" stroke="#1f2937" strokeWidth="1" />
-                        <polyline fill="none" stroke="#7fb4ff" strokeWidth="2" points={liveLines[0]} />
-                        <polyline fill="none" stroke="#5fd6b5" strokeWidth="2" points={liveLines[1]} />
-                        <polyline fill="none" stroke="#f4d96b" strokeWidth="2" points={liveLines[2]} />
-                      </svg>
-                    )}
-                  </div>
-                  <div className="mt-2 flex items-center gap-3 text-[10px] text-[color:var(--text-faint)]">
-                    <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#7fb4ff]" />X</span>
-                    <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#5fd6b5]" />Y</span>
-                    <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#f4d96b]" />Z</span>
+                    <div className="rounded-2xl border border-[color:var(--stroke)] bg-[#0b1220] px-2 py-3">
+                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#a7b2c4]">GYRO</p>
+                      <div className="mb-2 grid grid-cols-3 gap-2 text-[11px] text-[#a7b2c4]">
+                        <span>X {formatLiveValue(latestLiveSample?.gyroX, 1)} deg/s</span>
+                        <span>Y {formatLiveValue(latestLiveSample?.gyroY, 1)} deg/s</span>
+                        <span>Z {formatLiveValue(latestLiveSample?.gyroZ, 1)} deg/s</span>
+                      </div>
+                      {livePoints.length === 0 ? (
+                        <p className="text-sm text-[#a7b2c4]">Belum ada preview stream.</p>
+                      ) : (
+                        <svg viewBox="0 0 640 180" className="h-44 w-full">
+                          <line x1="0" y1="45" x2="640" y2="45" stroke="#1f2937" strokeWidth="1" />
+                          <line x1="0" y1="90" x2="640" y2="90" stroke="#1f2937" strokeWidth="1" />
+                          <line x1="0" y1="135" x2="640" y2="135" stroke="#1f2937" strokeWidth="1" />
+                          <polyline fill="none" stroke="#7fb4ff" strokeWidth="2" points={gyroXLine} />
+                          <polyline fill="none" stroke="#5fd6b5" strokeWidth="2" points={gyroYLine} />
+                          <polyline fill="none" stroke="#f4d96b" strokeWidth="2" points={gyroZLine} />
+                        </svg>
+                      )}
+                      <div className="mt-2 flex items-center gap-3 text-[10px] text-[#a7b2c4]">
+                        <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#7fb4ff]" />X</span>
+                        <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#5fd6b5]" />Y</span>
+                        <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#f4d96b]" />Z</span>
+                      </div>
+                    </div>
                   </div>
                 </Panel>
               </div>
@@ -1310,7 +1410,7 @@ export default function Home() {
                   {devices.length === 0 ? (
                     <p className="text-sm text-[color:var(--text-faint)]">Belum ada device terdeteksi.</p>
                   ) : null}
-                  {devices.map((device) => {
+                  {devicesForUi.map((device) => {
                     const trend = samplingHistoryByDevice[device.device_id] ?? [];
                     const intervalSeries = trend
                       .map((item) => item.interval_p99_ms)
