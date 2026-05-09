@@ -88,6 +88,9 @@ class WebSocketClient {
       _setState(WsState.connected);
       _startPingTimer();
       _startClockSync();
+      // Start foreground service to keep process alive when screen is off.
+      // Guard inside start() means repeated calls on reconnect are safe.
+      await ForegroundServiceHandler().start();
       return true;
     } catch (e) {
       _setState(WsState.disconnected);
@@ -278,6 +281,13 @@ class WebSocketClient {
     _control?.sink.add(proto.toBytes());
   }
 
+  // Seconds without a PONG before declaring the control channel offline.
+  // 8 s tolerates brief Wi-Fi degradation during subject motion (falls, rapid
+  // walking) without triggering a spurious reconnect cycle. A genuine dropout
+  // (phone dead, strap removed) is still detected within this window so the
+  // backend integrity report can flag the exact offline interval.
+  static const int _pongTimeoutSec = 8;
+
   void _startPingTimer() {
     _pingTimer?.cancel();
     _pingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -285,9 +295,8 @@ class WebSocketClient {
         type: CommandType.PING,
         issuedAtMs: DateTime.now().millisecondsSinceEpoch,
       ));
-      // OFFLINE if no pong for 3 seconds.
       if (_lastPong != null &&
-          DateTime.now().difference(_lastPong!).inSeconds > 3) {
+          DateTime.now().difference(_lastPong!).inSeconds > _pongTimeoutSec) {
         _onControlDisconnect();
       }
     });
@@ -343,6 +352,8 @@ class WebSocketClient {
     await _telemetry?.sink.close();
     _setState(WsState.disconnected);
     await FallbackBufferManager().deactivate();
+    // Stop foreground service only on explicit disconnect, not on temporary drops.
+    await ForegroundServiceHandler().stop();
   }
 
   void _setState(WsState s) {

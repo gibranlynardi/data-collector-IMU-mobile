@@ -25,49 +25,49 @@ class GraphWidget extends StatefulWidget {
 class _GraphWidgetState extends State<GraphWidget> with AutomaticKeepAliveClientMixin {
   final List<double> _data = [];
   late StreamSubscription _sub;
+  Timer? _renderTimer;
 
   @override
   void initState() {
     super.initState();
-    _subscribeToStream(); 
+    _subscribeToStream();
+    // Redraw at 20 fps. Accumulation happens at full 100 Hz in the stream
+    // listener; setState is only called here, cutting UI thread load 5×.
+    _renderTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
-  
   @override
   void didUpdateWidget(GraphWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.dataStream != oldWidget.dataStream) {
-      _sub?.cancel(); 
-      _subscribeToStream(); 
+      _sub.cancel();
+      _subscribeToStream();
     }
   }
 
   void _subscribeToStream() {
     _sub = widget.dataStream.listen((packet) {
-      if (mounted) {
-        setState(() {
-          double value = 0;
-          if (widget.sensorType == 'accel') {
-            if (widget.axis == 'x') value = packet.accX;
-            if (widget.axis == 'y') value = packet.accY;
-            if (widget.axis == 'z') value = packet.accZ;
-          } else {
-            if (widget.axis == 'x') value = packet.gyroX;
-            if (widget.axis == 'y') value = packet.gyroY;
-            if (widget.axis == 'z') value = packet.gyroZ;
-          }
-
-          _data.add(value);
-          if (_data.length > widget.maxPoints) {
-            _data.removeAt(0);
-          }
-        });
+      // Accumulate without setState — render timer drives redraws.
+      double value = 0;
+      if (widget.sensorType == 'accel') {
+        if (widget.axis == 'x') value = packet.accX;
+        if (widget.axis == 'y') value = packet.accY;
+        if (widget.axis == 'z') value = packet.accZ;
+      } else {
+        if (widget.axis == 'x') value = packet.gyroX;
+        if (widget.axis == 'y') value = packet.gyroY;
+        if (widget.axis == 'z') value = packet.gyroZ;
       }
+      _data.add(value);
+      if (_data.length > widget.maxPoints) _data.removeAt(0);
     });
   }
 
   @override
   void dispose() {
+    _renderTimer?.cancel();
     _sub.cancel();
     super.dispose();
   }

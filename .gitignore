@@ -254,6 +254,7 @@ memory.md
 system_mermaid.txt
 CLAUDE.md
 MIGRATION_PLAN.md
+FIX_PLAN.md
 
 # Recorded research data (never commit — stays on SSD only)
 data/

@@ -1,6 +1,11 @@
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
-// Keeps the process alive during recording (CLAUDE.md §9.3).
+// Keeps the process alive during background recording (CLAUDE.md §9.3).
+//
+// OEM NOTE: On Xiaomi / OPPO / Samsung, Android battery optimization can kill
+// foreground services regardless of this declaration. Each phone must have
+// battery optimization disabled for this app manually before first use.
+// Document this step in the operator SOP.
 class ForegroundServiceHandler {
   static final ForegroundServiceHandler _instance =
       ForegroundServiceHandler._internal();
@@ -32,9 +37,13 @@ class ForegroundServiceHandler {
     if (await FlutterForegroundTask.isRunningService) return;
     await FlutterForegroundTask.startService(
       notificationTitle: 'IMU Telemetry',
-      notificationText: 'Connecting...',
+      notificationText: 'Connected — standby',
       callback: _startCallback,
     );
+  }
+
+  void updateStatus(String text) {
+    FlutterForegroundTask.updateService(notificationText: text);
   }
 
   Future<void> stop() async {

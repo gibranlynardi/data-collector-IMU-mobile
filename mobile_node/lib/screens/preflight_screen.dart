@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' show sqrt;
 import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
@@ -14,10 +15,12 @@ class _Check {
   final String label;
   _Status status;
   String detail;
+  String hint;
 
   _Check(this.label)
       : status = _Status.pending,
-        detail = '';
+        detail = '',
+        hint = '';
 }
 
 // Go/No-Go gate before recording (CLAUDE.md §7).
@@ -133,38 +136,64 @@ class _PreflightScreenState extends State<PreflightScreen> {
   }
 
   Future<void> _checkSensorSanity() async {
-    _setRunning(4);
+    _setRunning(4, hint: 'Hold phone still…');
     InternalSensorManager().start(frequency: 100);
+
+    // Collect every sample emitted during the 3-second window (~300 samples at
+    // 100 Hz). Using the mean over all samples means a single motion spike does
+    // not fail the check — only sustained movement or a broken sensor will.
+    final List<double> accSamples = [];
+    final List<double> gyroSamples = [];
+
+    final sub = InternalSensorManager().dataStream.listen((pkt) {
+      final avm = sqrt(pkt.accX * pkt.accX + pkt.accY * pkt.accY + pkt.accZ * pkt.accZ);
+      final gvm = sqrt(pkt.gyroX * pkt.gyroX + pkt.gyroY * pkt.gyroY + pkt.gyroZ * pkt.gyroZ);
+      accSamples.add(avm);
+      gyroSamples.add(gvm);
+    });
+
     await Future.delayed(const Duration(seconds: 3));
+    await sub.cancel();
 
-    final accMag = InternalSensorManager().currentAccMagnitude;
-    final gyroMag = InternalSensorManager().currentGyroMagnitude;
-
-    // Acc magnitude while standing still ≈ 1g
-    if (accMag >= 0.5 && accMag <= 1.5) {
-      _setPass(4, 'avm=${accMag.toStringAsFixed(2)}g');
-    } else {
-      _setFail(4, 'avm=${accMag.toStringAsFixed(2)}g — hold still');
+    if (accSamples.isEmpty || gyroSamples.isEmpty) {
+      _setFail(4, 'No sensor data received — check permissions');
+      _setFail(5, 'No sensor data received — check permissions');
+      return;
     }
 
-    _setRunning(5);
-    if (gyroMag < 5.0) {
-      _setPass(5, 'gyro=${gyroMag.toStringAsFixed(2)}°/s');
+    final meanAcc = accSamples.reduce((a, b) => a + b) / accSamples.length;
+    final meanGyro = gyroSamples.reduce((a, b) => a + b) / gyroSamples.length;
+
+    // Acc magnitude at rest ≈ 1 g (gravity). Threshold 0.5–1.5 g.
+    if (meanAcc >= 0.5 && meanAcc <= 1.5) {
+      _setPass(4, 'avm=${meanAcc.toStringAsFixed(2)}g (${accSamples.length} samples)');
     } else {
-      _setFail(5, 'gyro=${gyroMag.toStringAsFixed(2)}°/s — hold still');
+      _setFail(4, 'avm=${meanAcc.toStringAsFixed(2)}g — hold still or check sensor');
+    }
+
+    _setRunning(5, hint: 'Hold phone still…');
+    if (meanGyro < 5.0) {
+      _setPass(5, 'gyro=${meanGyro.toStringAsFixed(2)}°/s (${gyroSamples.length} samples)');
+    } else {
+      _setFail(5, 'gyro=${meanGyro.toStringAsFixed(2)}°/s — hold still or check sensor');
     }
   }
 
-  void _setRunning(int i) => setState(() => _checks[i].status = _Status.running);
+  void _setRunning(int i, {String hint = ''}) => setState(() {
+        _checks[i].status = _Status.running;
+        _checks[i].hint = hint;
+      });
 
   void _setPass(int i, String detail) => setState(() {
         _checks[i].status = _Status.pass;
         _checks[i].detail = detail;
+        _checks[i].hint = '';
       });
 
   void _setFail(int i, String detail) => setState(() {
         _checks[i].status = _Status.fail;
         _checks[i].detail = detail;
+        _checks[i].hint = '';
       });
 
   @override
@@ -267,6 +296,10 @@ class _CheckTile extends StatelessWidget {
                 Text(check.label,
                     style: const TextStyle(
                         color: Colors.white, fontWeight: FontWeight.w500)),
+                if (check.status == _Status.running && check.hint.isNotEmpty)
+                  Text(check.hint,
+                      style: TextStyle(
+                          color: Colors.amber.withOpacity(0.9), fontSize: 12)),
                 if (check.detail.isNotEmpty)
                   Text(check.detail,
                       style: TextStyle(
