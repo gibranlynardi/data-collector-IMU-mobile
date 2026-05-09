@@ -65,7 +65,7 @@ type PreviewPoint = {
 
 type DevicePreviewStore = Record<string, PreviewPoint[]>;
 type DeviceSamplingHistoryStore = Record<string, SamplingQualityPoint[]>;
-type Tab = "command" | "preflight" | "devices" | "video" | "graph" | "annotations" | "artifacts";
+type Tab = "command" | "live" | "devices" | "video" | "artifacts" | "preflight";
 
 const API_BASE = getApiBaseUrl();
 const WS_BASE_OVERRIDE = process.env.NEXT_PUBLIC_WS_BASE_URL;
@@ -160,6 +160,23 @@ function sparkline(points: number[], width = 280, height = 84): string {
     .join(" ");
 }
 
+function sharedSparkline(series: number[][], width = 600, height = 180): string[] {
+  const flat = series.flat();
+  if (flat.length === 0) return series.map(() => "");
+  const min = Math.min(...flat);
+  const max = Math.max(...flat);
+  const span = Math.max(1e-6, max - min);
+  return series.map((points) =>
+    points
+      .map((point, index) => {
+        const x = (index / Math.max(1, points.length - 1)) * width;
+        const y = height - ((point - min) / span) * height;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" "),
+  );
+}
+
 function buildSamplingHistoryStore(points: SamplingQualityPoint[]): DeviceSamplingHistoryStore {
   const bucket: DeviceSamplingHistoryStore = {};
   for (const point of points) {
@@ -207,12 +224,12 @@ const NAV_ITEMS: { id: Tab; label: string; icon: ReactNode }[] = [
     ),
   },
   {
-    id: "preflight",
-    label: "Preflight",
+    id: "live",
+    label: "Live Capture",
     icon: (
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M6 2h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z" />
-        <path d="M6 7l1.5 1.5L10 6M6 11h6" />
+        <path d="M2 9c1-2 2-4 3-3s2 4 3 2 2-5 3-3 2 3 3 2" />
+        <line x1="2" y1="16" x2="16" y2="16" />
       </svg>
     ),
   },
@@ -238,32 +255,22 @@ const NAV_ITEMS: { id: Tab; label: string; icon: ReactNode }[] = [
     ),
   },
   {
-    id: "graph",
-    label: "Sensor Graph",
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M2 9c1-2 2-4 3-3s2 4 3 2 2-5 3-3 2 3 3 2" />
-        <line x1="2" y1="16" x2="16" y2="16" />
-      </svg>
-    ),
-  },
-  {
-    id: "annotations",
-    label: "Annotations",
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M3 4a1 1 0 0 1 1-1h7l4 4v7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4Z" />
-        <path d="M11 3v4h4M6 9h6M6 12h4" />
-      </svg>
-    ),
-  },
-  {
     id: "artifacts",
     label: "Artifacts",
     icon: (
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M2 5h14v2H2zM3 7h12v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z" />
         <path d="M7 11h4" />
+      </svg>
+    ),
+  },
+  {
+    id: "preflight",
+    label: "Preflight",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M6 2h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z" />
+        <path d="M6 7l1.5 1.5L10 6M6 11h6" />
       </svg>
     ),
   },
@@ -307,9 +314,11 @@ export default function Home() {
   const [previewByDevice, setPreviewByDevice] = useState<DevicePreviewStore>({});
   const [samplingHistoryByDevice, setSamplingHistoryByDevice] = useState<DeviceSamplingHistoryStore>({});
 
-  const [activeTab, setActiveTab] = useState<Tab>("command");
+  const [activeTab, setActiveTab] = useState<Tab>("live");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const activeTabRef = useRef<Tab>(activeTab);
+  const [liveDeviceId, setLiveDeviceId] = useState("");
+  const [liveSignalMode, setLiveSignalMode] = useState<"acc" | "gyro">("acc");
 
   const selectedSession = sessionId.trim();
   const activeAnnotations = annotations.filter((item) => !item.ended_at && !item.deleted);
@@ -348,9 +357,45 @@ export default function Home() {
     [requiredBindings.length, requiredOnlineCount],
   );
 
+  const onlineDevices = useMemo(() => devices.filter((item) => item.connected).length, [devices]);
+  const liveDeviceIds = useMemo(() => Object.keys(previewByDevice), [previewByDevice]);
+  const activeLiveDeviceId = liveDeviceId || liveDeviceIds[0] || "";
+  const livePoints = activeLiveDeviceId ? previewByDevice[activeLiveDeviceId] ?? [] : [];
+  const liveHz = devices.find((item) => item.device_id === activeLiveDeviceId)?.effective_hz ?? null;
+
+  const [accXLine, accYLine, accZLine] = useMemo(() => {
+    const series = [
+      livePoints.map((item) => item.accX),
+      livePoints.map((item) => item.accY),
+      livePoints.map((item) => item.accZ),
+    ];
+    return sharedSparkline(series, 640, 200);
+  }, [livePoints]);
+
+  const [gyroXLine, gyroYLine, gyroZLine] = useMemo(() => {
+    const series = [
+      livePoints.map((item) => item.gyroX),
+      livePoints.map((item) => item.gyroY),
+      livePoints.map((item) => item.gyroZ),
+    ];
+    return sharedSparkline(series, 640, 200);
+  }, [livePoints]);
+
+  const liveLines = liveSignalMode === "acc" ? [accXLine, accYLine, accZLine] : [gyroXLine, gyroYLine, gyroZLine];
+
   useEffect(() => {
     activeTabRef.current = activeTab;
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!liveDeviceIds.length) {
+      setLiveDeviceId("");
+      return;
+    }
+    if (!liveDeviceId || !liveDeviceIds.includes(liveDeviceId)) {
+      setLiveDeviceId(liveDeviceIds[0]);
+    }
+  }, [liveDeviceId, liveDeviceIds]);
 
   const allDevicesWithHz = useMemo(
     () => devices.length > 0 && devices.every((item) => item.effective_hz !== null),
@@ -542,7 +587,7 @@ export default function Home() {
       if (payload.type === "DASHBOARD_SNAPSHOT" && isJsonArray(payload.devices)) {
         setDevices((prev) => mergeDeviceSnapshot(prev, payload.devices as Array<Record<string, unknown>>));
       }
-      if (payload.type === "SENSOR_PREVIEW" && activeTabRef.current === "graph") {
+      if (payload.type === "SENSOR_PREVIEW" && activeTabRef.current === "live") {
         const deviceId = String(payload.device_id ?? "unknown");
         const lastSample = (payload.preview as { last_sample?: Record<string, unknown> } | undefined)?.last_sample;
         const accX = Number(lastSample?.acc_x_g ?? 0);
@@ -706,7 +751,7 @@ export default function Home() {
                 {item.icon}
               </span>
               {item.label}
-              {item.id === "annotations" && activeAnnotations.length > 0 && (
+              {item.id === "live" && activeAnnotations.length > 0 && (
                 <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-[color:rgba(47,111,237,0.25)] px-1 text-[10px] font-semibold text-[#dbe7ff]">
                   {activeAnnotations.length}
                 </span>
@@ -908,6 +953,301 @@ export default function Home() {
                   </div>
                 </div>
               </Panel>
+            </div>
+          )}
+
+          {/* ── Live Capture tab ── */}
+          {activeTab === "live" && (
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+              <div className="space-y-4">
+                <Panel title="Live Recording" subtitle="Realtime sensor preview + status ringkas">
+                  <div className="flex flex-wrap items-center gap-4 text-xs text-[color:var(--text-faint)]">
+                    <span>
+                      Recording <span className="font-semibold text-[color:var(--foreground)]">{session?.status ?? "idle"}</span>
+                    </span>
+                    <span>
+                      Devices Online <span className="font-semibold text-[color:var(--foreground)]">{onlineDevices}/{devices.length}</span>
+                    </span>
+                    <span>
+                      Active Annotations <span className="font-semibold text-[color:var(--foreground)]">{activeAnnotations.length}</span>
+                    </span>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[color:var(--text-faint)]">
+                      Device
+                    </span>
+                    <select
+                      value={activeLiveDeviceId}
+                      onChange={(event) => setLiveDeviceId(event.target.value)}
+                      disabled={!liveDeviceIds.length}
+                      className="rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] px-2 py-1 text-sm text-[color:var(--foreground)]"
+                    >
+                      {liveDeviceIds.length === 0 ? (
+                        <option value="">No devices</option>
+                      ) : (
+                        liveDeviceIds.map((deviceId) => (
+                          <option key={deviceId} value={deviceId}>
+                            {deviceId}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <div className="ml-auto flex items-center gap-3 text-[11px] text-[color:var(--text-faint)]">
+                      <span>Hz {liveHz !== null ? liveHz.toFixed(1) : "-"}</span>
+                      <span>Window 30s</span>
+                    </div>
+                  </div>
+
+                  <div className="mt-2 inline-flex rounded-full border border-[color:var(--stroke)] bg-[color:var(--surface-2)] p-0.5 text-xs">
+                    <button
+                      onClick={() => setLiveSignalMode("acc")}
+                      className={`rounded-full px-3 py-1 font-medium transition-colors ${
+                        liveSignalMode === "acc"
+                          ? "bg-[color:var(--surface)] text-[color:var(--foreground)]"
+                          : "text-[color:var(--text-faint)]"
+                      }`}
+                    >
+                      ACC
+                    </button>
+                    <button
+                      onClick={() => setLiveSignalMode("gyro")}
+                      className={`rounded-full px-3 py-1 font-medium transition-colors ${
+                        liveSignalMode === "gyro"
+                          ? "bg-[color:var(--surface)] text-[color:var(--foreground)]"
+                          : "text-[color:var(--text-faint)]"
+                      }`}
+                    >
+                      GYRO
+                    </button>
+                  </div>
+
+                  <div className="mt-3 rounded-2xl border border-[color:var(--stroke)] bg-[#0b1220] p-3">
+                    {livePoints.length === 0 ? (
+                      <p className="text-sm text-[#a7b2c4]">Belum ada preview stream.</p>
+                    ) : (
+                      <svg viewBox="0 0 640 200" className="h-52 w-full">
+                        <line x1="0" y1="50" x2="640" y2="50" stroke="#1f2937" strokeWidth="1" />
+                        <line x1="0" y1="100" x2="640" y2="100" stroke="#1f2937" strokeWidth="1" />
+                        <line x1="0" y1="150" x2="640" y2="150" stroke="#1f2937" strokeWidth="1" />
+                        <polyline fill="none" stroke="#7fb4ff" strokeWidth="2" points={liveLines[0]} />
+                        <polyline fill="none" stroke="#5fd6b5" strokeWidth="2" points={liveLines[1]} />
+                        <polyline fill="none" stroke="#f4d96b" strokeWidth="2" points={liveLines[2]} />
+                      </svg>
+                    )}
+                  </div>
+                  <div className="mt-2 flex items-center gap-3 text-[10px] text-[color:var(--text-faint)]">
+                    <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#7fb4ff]" />X</span>
+                    <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#5fd6b5]" />Y</span>
+                    <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#f4d96b]" />Z</span>
+                  </div>
+                </Panel>
+              </div>
+              <div className="space-y-4">
+                <Panel title="Annotations" subtitle="Start/stop/edit/delete selama recording">
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <input
+                      value={newLabel}
+                      onChange={(event) => setNewLabel(event.target.value)}
+                      className="rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] px-2 py-1.5 text-sm"
+                      placeholder="label"
+                    />
+                    <input
+                      value={newNote}
+                      onChange={(event) => setNewNote(event.target.value)}
+                      className="rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] px-2 py-1.5 text-sm"
+                      placeholder="note"
+                    />
+                    <button
+                      onClick={() =>
+                        selectedSession &&
+                        void runAction("Annotation started", async () => {
+                          await startAnnotation(selectedSession, {
+                            label: newLabel,
+                            notes: newNote || undefined,
+                          });
+                          await reloadSessionData();
+                        })
+                      }
+                      className="rounded-lg bg-[color:var(--accent-strong)] px-2 py-1.5 text-sm text-white transition-colors hover:bg-[color:var(--accent)]"
+                    >
+                      Start Annotation
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs text-[color:var(--text-faint)]">Active: {activeAnnotations.length}</p>
+                  <div className="mt-3 max-h-[60vh] space-y-2 overflow-auto pr-1">
+                    {annotations.length === 0 ? (
+                      <p className="text-sm text-[color:var(--text-faint)]">Belum ada annotation.</p>
+                    ) : null}
+                    {annotations.map((annotation) => (
+                      <div
+                        key={annotation.annotation_id}
+                        className="rounded-2xl border border-[color:var(--stroke)] bg-[color:var(--surface)] p-3 text-xs"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-semibold text-sm">{annotation.label}</p>
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                              annotation.ended_at
+                                ? "bg-[color:var(--success-bg)] text-[color:var(--success-text)]"
+                                : "bg-[color:var(--warning-bg)] text-[color:var(--warning-text)]"
+                            }`}
+                          >
+                            {annotationStatusText(annotation)}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-[color:var(--text-muted)]">{annotation.annotation_id}</p>
+                        <p className="text-[color:var(--text-muted)]">
+                          {annotation.started_at}
+                          {annotation.ended_at ? ` → ${annotation.ended_at}` : ""}
+                        </p>
+                        <p className="text-[color:var(--text-muted)]">Duration: {annotationDurationText(annotation)}</p>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {annotation.ended_at === null ? (
+                            <button
+                              onClick={() =>
+                                selectedSession &&
+                                void runAction("Annotation stopped", async () => {
+                                  await stopAnnotation(selectedSession, annotation.annotation_id);
+                                  await reloadSessionData();
+                                })
+                              }
+                              className="rounded-lg bg-[#b34141] px-2.5 py-1 text-xs text-white transition-colors hover:bg-[#982f2f]"
+                            >
+                              Stop
+                            </button>
+                          ) : null}
+                          <button
+                            onClick={() =>
+                              void runAction("Annotation patched", async () => {
+                                const nextLabel = globalThis.prompt("Label baru", annotation.label);
+                                if (nextLabel === null || nextLabel.trim().length === 0) return;
+                                const nextNotes = globalThis.prompt(
+                                  "Notes baru (kosongkan untuk null)",
+                                  annotation.notes ?? "",
+                                );
+                                if (nextNotes === null) return;
+                                const nextStartedAt = globalThis.prompt(
+                                  "Started at (ISO-8601)",
+                                  annotation.started_at,
+                                );
+                                if (nextStartedAt === null || parseIsoTimestamp(nextStartedAt) === null) {
+                                  throw new Error("started_at harus format ISO-8601 valid");
+                                }
+                                const nextEndedAtInput = globalThis.prompt(
+                                  "Ended at (ISO-8601, kosongkan jika active)",
+                                  annotation.ended_at ?? "",
+                                );
+                                if (nextEndedAtInput === null) return;
+                                const normalizedEndedAt = nextEndedAtInput.trim();
+                                if (normalizedEndedAt && parseIsoTimestamp(normalizedEndedAt) === null) {
+                                  throw new Error("ended_at harus format ISO-8601 valid");
+                                }
+                                await patchAnnotation(annotation.annotation_id, {
+                                  label: nextLabel.trim(),
+                                  notes: nextNotes.trim() ? nextNotes.trim() : undefined,
+                                  started_at: nextStartedAt,
+                                  ended_at: normalizedEndedAt ? normalizedEndedAt : null,
+                                });
+                                await reloadSessionData();
+                              })
+                            }
+                            className="rounded-lg border border-[color:var(--stroke)] px-2.5 py-1 text-xs text-[color:var(--text-muted)] transition-colors hover:bg-[color:var(--surface-2)]"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() =>
+                              void runAction("Annotation deleted", async () => {
+                                await deleteAnnotation(annotation.annotation_id);
+                                await reloadSessionData();
+                              })
+                            }
+                            className="rounded-lg border border-[color:var(--danger-text)] px-2.5 py-1 text-xs text-[color:var(--danger-text)] transition-colors hover:bg-[color:var(--danger-bg)]"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Panel>
+
+                <Panel title="Quick Actions" subtitle="Start/stop/finalize tanpa pindah tab">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <button
+                      onClick={() =>
+                        selectedSession &&
+                        void runAction("Session started", async () => {
+                          await startSession(selectedSession);
+                          await reloadSessionData();
+                        })
+                      }
+                      className="rounded-xl bg-[#1f8f5f] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#17724b] disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={!selectedSession}
+                    >
+                      Start
+                    </button>
+                    <button
+                      onClick={() =>
+                        selectedSession &&
+                        void runAction("Stop requested", async () => {
+                          if (anonymizeMode) {
+                            const confirmed = globalThis.confirm(
+                              "Toggle anonymize aktif. Jalankan anonymize setelah STOP?",
+                            );
+                            if (!confirmed) return;
+                          }
+                          await stopSession(selectedSession);
+                          if (anonymizeMode) await runAnonymize(selectedSession);
+                          await reloadSessionData();
+                        })
+                      }
+                      className="rounded-xl bg-[#b34141] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#982f2f] disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={!selectedSession}
+                    >
+                      Stop
+                    </button>
+                    <button
+                      onClick={() =>
+                        selectedSession &&
+                        void runAction("Session finalized", async () => {
+                          if (anonymizeMode) {
+                            const confirmed = globalThis.confirm(
+                              "Toggle anonymize aktif. Jalankan anonymize setelah FINALIZE?",
+                            );
+                            if (!confirmed) return;
+                          }
+                          await finalizeSession(selectedSession, false);
+                          if (anonymizeMode) await runAnonymize(selectedSession);
+                          await reloadSessionData();
+                        })
+                      }
+                      className="rounded-xl bg-[#9a7b3e] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#7c6231] disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={!selectedSession}
+                    >
+                      Finalize
+                    </button>
+                    <button
+                      onClick={() =>
+                        selectedSession &&
+                        void runAction("Completeness checked", async () => {
+                          const report = await fetchSessionCompleteness(selectedSession);
+                          setCompleteness(report);
+                          setShowFinalizeIncompleteModal(true);
+                        })
+                      }
+                      className="rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface-2)] px-3 py-2 text-sm font-medium text-[color:var(--text-muted)] transition-colors hover:bg-[color:var(--surface-3)] disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={!selectedSession}
+                    >
+                      Finalize Incomplete
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs text-[color:var(--text-faint)]">
+                    Gunakan Session Controls untuk create session dan assign device.
+                  </p>
+                </Panel>
+              </div>
             </div>
           )}
 
@@ -1141,192 +1481,6 @@ export default function Home() {
                       </div>
                     ) : null}
                   </div>
-                </div>
-              </Panel>
-            </div>
-          )}
-
-          {/* ── Sensor Graph tab ── */}
-          {activeTab === "graph" && (
-            <div className="max-w-3xl">
-              <Panel title="Realtime Sensor Graph" subtitle="Rolling 30s window dari event SENSOR_PREVIEW">
-                <div className="space-y-3">
-                  {Object.entries(previewByDevice).length === 0 ? (
-                    <p className="text-sm text-[color:var(--text-faint)]">Belum ada preview stream.</p>
-                  ) : null}
-                  {Object.entries(previewByDevice).map(([deviceId, points]) => {
-                    const accXLine = sparkline(points.map((item) => item.accX));
-                    const accYLine = sparkline(points.map((item) => item.accY));
-                    const accZLine = sparkline(points.map((item) => item.accZ));
-                    const gyroXLine = sparkline(points.map((item) => item.gyroX));
-                    const gyroYLine = sparkline(points.map((item) => item.gyroY));
-                    const gyroZLine = sparkline(points.map((item) => item.gyroZ));
-                    const hz = devices.find((item) => item.device_id === deviceId)?.effective_hz;
-                    return (
-                      <div key={deviceId} className="rounded-2xl border border-[color:var(--stroke)] bg-[color:var(--surface)] p-3">
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-[color:var(--text-muted)]">
-                          {deviceId} · Hz {hz?.toFixed(1) ?? "-"}
-                        </p>
-                        <p className="mb-1 text-[11px] text-[color:var(--text-faint)]">Accelerometer (X/Y/Z)</p>
-                        <svg viewBox="0 0 280 84" className="h-24 w-full rounded-xl bg-[#0b1220]">
-                          <polyline fill="none" stroke="#f0a36f" strokeWidth="2" points={accXLine} />
-                          <polyline fill="none" stroke="#9ae56f" strokeWidth="2" points={accYLine} />
-                          <polyline fill="none" stroke="#f66f83" strokeWidth="2" points={accZLine} />
-                        </svg>
-                        <div className="mt-1 mb-2 flex gap-3 text-[10px] text-[color:var(--text-faint)]">
-                          <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-[#f0a36f]" />X</span>
-                          <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-[#9ae56f]" />Y</span>
-                          <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-[#f66f83]" />Z</span>
-                        </div>
-                        <p className="mb-1 text-[11px] text-[color:var(--text-faint)]">Gyroscope (X/Y/Z)</p>
-                        <svg viewBox="0 0 280 84" className="mt-1 h-24 w-full rounded-xl bg-[#0a1623]">
-                          <polyline fill="none" stroke="#6fe8d8" strokeWidth="2" points={gyroXLine} />
-                          <polyline fill="none" stroke="#7fb4ff" strokeWidth="2" points={gyroYLine} />
-                          <polyline fill="none" stroke="#f4d96b" strokeWidth="2" points={gyroZLine} />
-                        </svg>
-                        <div className="mt-1 flex gap-3 text-[10px] text-[color:var(--text-faint)]">
-                          <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-[#6fe8d8]" />X</span>
-                          <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-[#7fb4ff]" />Y</span>
-                          <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-[#f4d96b]" />Z</span>
-                          <span className="ml-auto text-[color:var(--text-muted)]">Window 30s</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </Panel>
-            </div>
-          )}
-
-          {/* ── Annotations tab ── */}
-          {activeTab === "annotations" && (
-            <div className="max-w-2xl">
-              <Panel title="Annotations" subtitle="Start/stop/edit/delete dengan live refresh">
-                <div className="grid gap-2 sm:grid-cols-3">
-                  <input
-                    value={newLabel}
-                    onChange={(event) => setNewLabel(event.target.value)}
-                    className="rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] px-2 py-1.5 text-sm"
-                    placeholder="label"
-                  />
-                  <input
-                    value={newNote}
-                    onChange={(event) => setNewNote(event.target.value)}
-                    className="rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] px-2 py-1.5 text-sm"
-                    placeholder="note"
-                  />
-                  <button
-                    onClick={() =>
-                      selectedSession &&
-                      void runAction("Annotation started", async () => {
-                        await startAnnotation(selectedSession, {
-                          label: newLabel,
-                          notes: newNote || undefined,
-                        });
-                        await reloadSessionData();
-                      })
-                    }
-                    className="rounded-lg bg-[color:var(--accent-strong)] px-2 py-1.5 text-sm text-white transition-colors hover:bg-[color:var(--accent)]"
-                  >
-                    Start Annotation
-                  </button>
-                </div>
-                <p className="mt-2 text-xs text-[color:var(--text-faint)]">Active: {activeAnnotations.length}</p>
-                <div className="mt-3 max-h-[60vh] space-y-2 overflow-auto pr-1">
-                  {annotations.length === 0 ? (
-                    <p className="text-sm text-[color:var(--text-faint)]">Belum ada annotation.</p>
-                  ) : null}
-                  {annotations.map((annotation) => (
-                    <div
-                      key={annotation.annotation_id}
-                      className="rounded-2xl border border-[color:var(--stroke)] bg-[color:var(--surface)] p-3 text-xs"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-semibold text-sm">{annotation.label}</p>
-                        <span
-                          className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                            annotation.ended_at
-                              ? "bg-[color:var(--success-bg)] text-[color:var(--success-text)]"
-                              : "bg-[color:var(--warning-bg)] text-[color:var(--warning-text)]"
-                          }`}
-                        >
-                          {annotationStatusText(annotation)}
-                        </span>
-                      </div>
-                      <p className="mt-0.5 text-[color:var(--text-muted)]">{annotation.annotation_id}</p>
-                      <p className="text-[color:var(--text-muted)]">
-                        {annotation.started_at}
-                        {annotation.ended_at ? ` → ${annotation.ended_at}` : ""}
-                      </p>
-                      <p className="text-[color:var(--text-muted)]">Duration: {annotationDurationText(annotation)}</p>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {annotation.ended_at === null ? (
-                          <button
-                            onClick={() =>
-                              selectedSession &&
-                              void runAction("Annotation stopped", async () => {
-                                await stopAnnotation(selectedSession, annotation.annotation_id);
-                                await reloadSessionData();
-                              })
-                            }
-                            className="rounded-lg bg-[#b34141] px-2.5 py-1 text-xs text-white transition-colors hover:bg-[#982f2f]"
-                          >
-                            Stop
-                          </button>
-                        ) : null}
-                        <button
-                          onClick={() =>
-                            void runAction("Annotation patched", async () => {
-                              const nextLabel = globalThis.prompt("Label baru", annotation.label);
-                              if (nextLabel === null || nextLabel.trim().length === 0) return;
-                              const nextNotes = globalThis.prompt(
-                                "Notes baru (kosongkan untuk null)",
-                                annotation.notes ?? "",
-                              );
-                              if (nextNotes === null) return;
-                              const nextStartedAt = globalThis.prompt(
-                                "Started at (ISO-8601)",
-                                annotation.started_at,
-                              );
-                              if (nextStartedAt === null || parseIsoTimestamp(nextStartedAt) === null) {
-                                throw new Error("started_at harus format ISO-8601 valid");
-                              }
-                              const nextEndedAtInput = globalThis.prompt(
-                                "Ended at (ISO-8601, kosongkan jika active)",
-                                annotation.ended_at ?? "",
-                              );
-                              if (nextEndedAtInput === null) return;
-                              const normalizedEndedAt = nextEndedAtInput.trim();
-                              if (normalizedEndedAt && parseIsoTimestamp(normalizedEndedAt) === null) {
-                                throw new Error("ended_at harus format ISO-8601 valid");
-                              }
-                              await patchAnnotation(annotation.annotation_id, {
-                                label: nextLabel.trim(),
-                                notes: nextNotes.trim() ? nextNotes.trim() : undefined,
-                                started_at: nextStartedAt,
-                                ended_at: normalizedEndedAt ? normalizedEndedAt : null,
-                              });
-                              await reloadSessionData();
-                            })
-                          }
-                          className="rounded-lg border border-[color:var(--stroke)] px-2.5 py-1 text-xs text-[color:var(--text-muted)] transition-colors hover:bg-[color:var(--surface-2)]"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() =>
-                            void runAction("Annotation deleted", async () => {
-                              await deleteAnnotation(annotation.annotation_id);
-                              await reloadSessionData();
-                            })
-                          }
-                          className="rounded-lg border border-[color:var(--danger-text)] px-2.5 py-1 text-xs text-[color:var(--danger-text)] transition-colors hover:bg-[color:var(--danger-bg)]"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  ))}
                 </div>
               </Panel>
             </div>
