@@ -346,11 +346,23 @@ class VideoRecorderService:
             "backend": "unknown",
         }
 
-    def anonymize_session_video(self, session_id: str) -> dict[str, Any]:
+    def anonymize_session_video(self, session_id: str, force_mock: bool = False) -> dict[str, Any]:
         settings = self._settings
-        source_path, sidecar_path = self._resolve_video_paths(session_id)
-        output_path = source_path.with_name(f"{session_id}_webcam_anon.mp4")
-        metadata_path = source_path.with_name(f"{session_id}_webcam_anon.json")
+        session_root = settings.data_root / "sessions" / session_id / "video"
+        session_root.mkdir(parents=True, exist_ok=True)
+        sidecar_path = session_root / f"{session_id}_webcam.json"
+        source_path = session_root / f"{session_id}_webcam.mp4"
+        if force_mock:
+            mock_source = self._resolve_mock_deface_source(settings)
+            if mock_source is None:
+                raise FileNotFoundError("mock video source not found")
+            source_path = mock_source
+        elif not source_path.exists():
+            mock_source = self._resolve_mock_deface_source(settings)
+            if mock_source is not None:
+                source_path = mock_source
+        output_path = session_root / f"{session_id}_webcam_anon.mp4"
+        metadata_path = session_root / f"{session_id}_webcam_anon.json"
 
         self._validate_anonymize_preconditions(settings, source_path)
         command = self._build_deface_command(settings, source_path, output_path)
@@ -431,6 +443,20 @@ class VideoRecorderService:
             session_root / f"{session_id}_webcam.mp4",
             session_root / f"{session_id}_webcam.json",
         )
+
+    @staticmethod
+    def _resolve_mock_deface_source(settings: Any) -> Path | None:
+        candidate = settings.video_deface_mock_source
+        if candidate:
+            candidate_path = Path(candidate).expanduser()
+            if candidate_path.exists():
+                return candidate_path
+
+        repo_root = Path(__file__).resolve().parents[3]
+        fallback = repo_root / "web-dashboard" / "public" / "videos" / "Fall-Sample.mp4"
+        if fallback.exists():
+            return fallback
+        return None
 
     def _start_opencv_recording(
         self,

@@ -6,7 +6,7 @@ from pathlib import Path as FsPath
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -1169,13 +1169,17 @@ def download_video_metadata(session_id: Annotated[str, Path(pattern=SESSION_ID_P
 
 
 @router.post("/{session_id}/video/anonymize", responses=SESSION_RESPONSES_404)
-def anonymize_video(session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)], db: DBSession) -> VideoAnonymizeResponse:
+def anonymize_video(
+    session_id: Annotated[str, Path(pattern=SESSION_ID_PATTERN)],
+    db: DBSession,
+    use_mock: bool = Query(default=False),
+) -> VideoAnonymizeResponse:
     session = db.get(SessionModel, session_id)
     if not session:
         raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
 
     try:
-        payload = video_recorder_service.anonymize_session_video(session_id)
+        payload = video_recorder_service.anonymize_session_video(session_id, force_mock=use_mock)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:

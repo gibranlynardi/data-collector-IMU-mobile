@@ -318,6 +318,9 @@ export default function Home() {
   const [showFinalizeIncompleteModal, setShowFinalizeIncompleteModal] = useState(false);
   const [finalizeIncompleteReason, setFinalizeIncompleteReason] = useState("");
   const [webcamFrameTick, setWebcamFrameTick] = useState(0);
+  const [localPreviewStream, setLocalPreviewStream] = useState<MediaStream | null>(null);
+  const localPreviewRef = useRef<HTMLVideoElement | null>(null);
+  const [mockVideoEnabled, setMockVideoEnabled] = useState(false);
 
   const [startBarrierUnixNs, setStartBarrierUnixNs] = useState<number | null>(null);
   const [countdownMs, setCountdownMs] = useState<number>(0);
@@ -600,10 +603,10 @@ export default function Home() {
     setAnonymizeState("pending");
     setAnonymizeResult(null);
     setAnonymizeState("running");
-    const result = await anonymizeVideo(targetSession);
+    const result = await anonymizeVideo(targetSession, { useMock: mockVideoEnabled });
     setAnonymizeResult(result);
     setAnonymizeState(result.status === "completed" ? "completed" : "failed");
-  }, []);
+  }, [mockVideoEnabled]);
 
   const reloadBaseData = useCallback(async () => {
     const [healthPayload, preflightPayload, devicePayload] = await Promise.all([
@@ -615,6 +618,33 @@ export default function Home() {
     setPreflight(preflightPayload);
     setDevices(devicePayload);
   }, []);
+
+  const stopLocalPreview = useCallback((stream: MediaStream | null) => {
+    if (!stream) return;
+    stream.getTracks().forEach((track) => track.stop());
+  }, []);
+
+  const requestWebcamPermission = useCallback(async () => {
+    setError(null);
+    setInfo("Requesting webcam permission...");
+    try {
+      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+        setInfo("Webcam permission not supported in this browser");
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      setLocalPreviewStream((prev) => {
+        stopLocalPreview(prev);
+        return stream;
+      });
+      setInfo("Webcam permission granted");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Webcam permission denied");
+    } finally {
+      setWebcamFrameTick((prev) => prev + 1);
+      void reloadBaseData();
+    }
+  }, [reloadBaseData, stopLocalPreview]);
 
   useEffect(() => {
     let alive = true;
@@ -645,12 +675,32 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (localPreviewRef.current) {
+      localPreviewRef.current.srcObject = localPreviewStream;
+    }
+  }, [localPreviewStream]);
+
+  useEffect(() => {
+    if (activeTab === "video") return;
+    if (localPreviewStream) {
+      stopLocalPreview(localPreviewStream);
+      setLocalPreviewStream(null);
+    }
+  }, [activeTab, localPreviewStream, stopLocalPreview]);
+
+  useEffect(() => {
     if (activeTab !== "video") return;
     const timer = globalThis.setInterval(() => {
       setWebcamFrameTick((prev) => prev + 1);
     }, 2000);
     return () => globalThis.clearInterval(timer);
   }, [activeTab]);
+
+  useEffect(() => {
+    return () => {
+      stopLocalPreview(localPreviewStream);
+    };
+  }, [localPreviewStream, stopLocalPreview]);
 
   useEffect(() => {
     if (!selectedSession) return;
@@ -1513,19 +1563,55 @@ export default function Home() {
                     <p>Elapsed video: {secondsToClock(videoElapsedSeconds)}</p>
                     <p>Dropped frame estimate: {video?.dropped_frame_estimate ?? 0}</p>
                     <p>Webcam preview: {preflight?.webcam_preview_ok ? "ready sebelum record" : "not ready"}</p>
-                    <Image
-                      src={webcamSnapshot}
-                      alt="Webcam snapshot"
-                      width={640}
-                      height={360}
-                      unoptimized
-                      className="mt-2 h-40 w-full rounded-xl border border-[color:var(--stroke)] object-cover"
-                      onError={() => {
-                        setInfo("Webcam snapshot endpoint belum tersedia / kamera tidak bisa dibaca");
-                      }}
-                    />
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => void requestWebcamPermission()}
+                        className="rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] px-3 py-1.5 text-xs text-[color:var(--text-muted)] transition-colors hover:bg-[color:var(--surface-2)]"
+                      >
+                        Re-ask webcam permission
+                      </button>
+                      {localPreviewStream ? (
+                        <button
+                          onClick={() => {
+                            stopLocalPreview(localPreviewStream);
+                            setLocalPreviewStream(null);
+                          }}
+                          className="rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] px-3 py-1.5 text-xs text-[color:var(--text-muted)] transition-colors hover:bg-[color:var(--surface-2)]"
+                        >
+                          Stop preview
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      <div className="rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface)]">
+                        {localPreviewStream ? (
+                          <video
+                            ref={localPreviewRef}
+                            autoPlay
+                            playsInline
+                            muted
+                            className="h-40 w-full rounded-xl object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-40 items-center justify-center rounded-xl text-xs text-[color:var(--text-faint)]">
+                            Local preview inactive
+                          </div>
+                        )}
+                      </div>
+                      <Image
+                        src={webcamSnapshot}
+                        alt="Webcam snapshot"
+                        width={640}
+                        height={360}
+                        unoptimized
+                        className="h-32 w-full rounded-xl border border-[color:var(--stroke)] object-cover"
+                        onError={() => {
+                          setInfo("Webcam snapshot endpoint belum tersedia / kamera tidak bisa dibaca");
+                        }}
+                      />
+                    </div>
                     <p className="mt-1 text-xs text-[color:var(--text-faint)]">
-                      Preview menggunakan snapshot JPEG periodik dari backend.
+                      Local preview dari browser. Snapshot JPEG diambil periodik dari backend.
                     </p>
                     {videoMetadata ? (
                       <div className="mt-2 rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] p-2 text-xs">
@@ -1554,6 +1640,14 @@ export default function Home() {
                         onChange={(event) => setAnonymizeMode(event.target.checked)}
                       />
                       <span>Anonymize saat stop/finalize</span>
+                    </label>
+                    <label className="mt-2 flex items-center gap-2 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={mockVideoEnabled}
+                        onChange={(event) => setMockVideoEnabled(event.target.checked)}
+                      />
+                      <span>Mock video (Fall-Sample.mp4)</span>
                     </label>
                     <button
                       onClick={() =>
