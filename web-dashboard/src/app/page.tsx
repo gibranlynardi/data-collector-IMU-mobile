@@ -320,6 +320,7 @@ export default function Home() {
   const [webcamFrameTick, setWebcamFrameTick] = useState(0);
   const [localPreviewStream, setLocalPreviewStream] = useState<MediaStream | null>(null);
   const localPreviewRef = useRef<HTMLVideoElement | null>(null);
+  const [webcamAspectRatio, setWebcamAspectRatio] = useState<number | null>(null);
   const [mockVideoEnabled, setMockVideoEnabled] = useState(false);
 
   const [startBarrierUnixNs, setStartBarrierUnixNs] = useState<number | null>(null);
@@ -370,6 +371,14 @@ export default function Home() {
     if (videoMetadata?.duration_ms) return Math.floor(videoMetadata.duration_ms / 1000);
     return 0;
   }, [video, videoMetadata]);
+
+  const previewAspectRatio = useMemo(() => {
+    if (webcamAspectRatio && webcamAspectRatio > 0) return webcamAspectRatio;
+    if (videoMetadata?.width && videoMetadata?.height) {
+      return Math.max(0.1, videoMetadata.width / videoMetadata.height);
+    }
+    return 16 / 9;
+  }, [videoMetadata?.height, videoMetadata?.width, webcamAspectRatio]);
 
   const famsReady = useMemo(() => {
     const hasManifest = artifacts.some((item) => item.artifact_type === "manifest" && item.exists);
@@ -633,6 +642,15 @@ export default function Home() {
         return;
       }
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        const settings = track.getSettings();
+        if (settings.width && settings.height) {
+          setWebcamAspectRatio(settings.width / settings.height);
+        } else if (typeof settings.aspectRatio === "number" && settings.aspectRatio > 0) {
+          setWebcamAspectRatio(settings.aspectRatio);
+        }
+      }
       setLocalPreviewStream((prev) => {
         stopLocalPreview(prev);
         return stream;
@@ -1583,32 +1601,46 @@ export default function Home() {
                       ) : null}
                     </div>
                     <div className="mt-2 space-y-2">
-                      <div className="rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface)]">
+                      <div
+                        className="rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface)]"
+                        style={{ aspectRatio: previewAspectRatio }}
+                      >
                         {localPreviewStream ? (
                           <video
                             ref={localPreviewRef}
                             autoPlay
                             playsInline
                             muted
-                            className="h-40 w-full rounded-xl object-cover"
+                            onLoadedMetadata={(event) => {
+                              const videoEl = event.currentTarget;
+                              if (videoEl.videoWidth && videoEl.videoHeight) {
+                                setWebcamAspectRatio(videoEl.videoWidth / videoEl.videoHeight);
+                              }
+                            }}
+                            className="h-full w-full rounded-xl object-contain"
                           />
                         ) : (
-                          <div className="flex h-40 items-center justify-center rounded-xl text-xs text-[color:var(--text-faint)]">
+                          <div className="flex h-full items-center justify-center rounded-xl text-xs text-[color:var(--text-faint)]">
                             Local preview inactive
                           </div>
                         )}
                       </div>
-                      <Image
-                        src={webcamSnapshot}
-                        alt="Webcam snapshot"
-                        width={640}
-                        height={360}
-                        unoptimized
-                        className="h-32 w-full rounded-xl border border-[color:var(--stroke)] object-cover"
-                        onError={() => {
-                          setInfo("Webcam snapshot endpoint belum tersedia / kamera tidak bisa dibaca");
-                        }}
-                      />
+                      <div
+                        className="relative w-full overflow-hidden rounded-xl border border-[color:var(--stroke)]"
+                        style={{ aspectRatio: previewAspectRatio }}
+                      >
+                        <Image
+                          src={webcamSnapshot}
+                          alt="Webcam snapshot"
+                          fill
+                          sizes="(min-width: 1024px) 640px, 100vw"
+                          unoptimized
+                          className="object-contain"
+                          onError={() => {
+                            setInfo("Webcam snapshot endpoint belum tersedia / kamera tidak bisa dibaca");
+                          }}
+                        />
+                      </div>
                     </div>
                     <p className="mt-1 text-xs text-[color:var(--text-faint)]">
                       Local preview dari browser. Snapshot JPEG diambil periodik dari backend.
