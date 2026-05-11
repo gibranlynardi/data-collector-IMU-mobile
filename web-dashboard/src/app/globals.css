@@ -1,8 +1,33 @@
 @import "tailwindcss";
 
 :root {
-  --background: #efe6d8;
-  --foreground: #1e1b16;
+  --background: #f6f7fb;
+  --foreground: #0f172a;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --surface-3: #e7ecf3;
+  --stroke: #d7dee8;
+  --text-muted: #475569;
+  --text-faint: #64748b;
+  --accent: #2f6fed;
+  --accent-strong: #214fb0;
+  --accent-soft: #dbe7ff;
+  --success-bg: #def5e6;
+  --success-text: #166534;
+  --warning-bg: #fff4d6;
+  --warning-text: #8a5a00;
+  --danger-bg: #fde2e2;
+  --danger-text: #991b1b;
+  --shadow-panel: 0 18px 50px -35px rgba(15, 23, 42, 0.35);
+  --shadow-sidebar: 4px 0 32px rgba(15, 23, 42, 0.45);
+  --shadow-header: 0 2px 16px -8px rgba(15, 23, 42, 0.25);
+  --sidebar-bg: #0b1220;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-text: #e2e8f0;
+  --sidebar-muted: #91a4c7;
+  --sidebar-accent: #2f6fed;
+  --sidebar-accent-bg: rgba(47, 111, 237, 0.18);
+  --sidebar-hover: rgba(255, 255, 255, 0.08);
 }
 
 @theme inline {
@@ -13,7 +38,7 @@
 }
 
 body {
-  background: var(--background);
+  background: radial-gradient(120% 140% at 0% 0%, #f8fafc 0%, #eef2f7 55%, #e2e8f0 100%);
   color: var(--foreground);
   font-family: var(--font-poppins), sans-serif;
 }
@@ -24,5 +49,10 @@ body {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #b89e78 #f4ecdf;
+  scrollbar-color: #c6d0df #eef2f7;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--foreground);
 }

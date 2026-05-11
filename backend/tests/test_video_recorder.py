@@ -330,7 +330,7 @@ def test_video_anonymize_endpoint(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         video_recorder_service,
         "anonymize_session_video",
-        lambda sid: {
+        lambda sid, force_mock=False: {
             "session_id": sid,
             "status": "completed",
             "source_file_path": str(data_root / "sessions" / sid / "video" / f"{sid}_webcam.mp4"),

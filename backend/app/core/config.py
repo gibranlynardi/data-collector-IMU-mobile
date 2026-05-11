@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     video_deface_replacewith: str = "blur"
     video_deface_keep_audio: bool = False
     video_deface_backend: str = "auto"
+    video_deface_mock_source: Path | None = None
     video_deface_blur_kernel: int = 51
     video_deface_scale_factor: float = 1.1
     video_deface_min_neighbors: int = 5

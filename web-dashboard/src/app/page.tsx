@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   anonymizeVideo,
@@ -65,7 +65,7 @@ type PreviewPoint = {
 
 type DevicePreviewStore = Record<string, PreviewPoint[]>;
 type DeviceSamplingHistoryStore = Record<string, SamplingQualityPoint[]>;
-type Tab = "command" | "preflight" | "devices" | "video" | "graph" | "annotations" | "artifacts";
+type Tab = "command" | "live" | "devices" | "video" | "artifacts" | "preflight";
 
 const API_BASE = getApiBaseUrl();
 const WS_BASE_OVERRIDE = process.env.NEXT_PUBLIC_WS_BASE_URL;
@@ -74,6 +74,7 @@ const OPERATOR_WS_ID = process.env.NEXT_PUBLIC_OPERATOR_ID ?? "dashboard-web";
 const PREVIEW_WINDOW_MS = 30_000;
 const SAMPLING_HISTORY_LIMIT = 96;
 const SAMPLING_TARGET_INTERVAL_MS = 10;
+const MOCK_DEVICE_ID = "mock-imu-01";
 
 function buildWsBase(apiBase: string, wsPort: number | null): string {
   if (WS_BASE_OVERRIDE && WS_BASE_OVERRIDE.trim()) {
@@ -88,10 +89,10 @@ function buildWsBase(apiBase: string, wsPort: number | null): string {
 }
 
 function statusBadge(status: "idle" | "pending" | "running" | "completed" | "failed"): string {
-  if (status === "completed") return "bg-[#d4f3df] text-[#245f3b]";
-  if (status === "failed") return "bg-[#f7d6cc] text-[#8b3727]";
-  if (status === "running" || status === "pending") return "bg-[#ffe3ce] text-[#824622]";
-  return "bg-[#e9e0d2] text-[#5e4f3d]";
+  if (status === "completed") return "bg-[color:var(--success-bg)] text-[color:var(--success-text)]";
+  if (status === "failed") return "bg-[color:var(--danger-bg)] text-[color:var(--danger-text)]";
+  if (status === "running" || status === "pending") return "bg-[color:var(--warning-bg)] text-[color:var(--warning-text)]";
+  return "bg-[color:var(--surface-3)] text-[color:var(--text-muted)]";
 }
 
 function isJsonArray(value: unknown): value is Array<Record<string, unknown>> {
@@ -130,6 +131,11 @@ function secondsToClock(seconds: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 
+function formatLiveValue(value: number | null | undefined, digits: number): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "--";
+  return value.toFixed(digits);
+}
+
 function parseIsoTimestamp(value: string): number | null {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -160,6 +166,27 @@ function sparkline(points: number[], width = 280, height = 84): string {
     .join(" ");
 }
 
+function sharedSparkline(series: number[][], width = 600, height = 180, paddingRatio = 0.15): string[] {
+  const flat = series.flat();
+  if (flat.length === 0) return series.map(() => "");
+  const min = Math.min(...flat);
+  const max = Math.max(...flat);
+  const span = Math.max(1e-6, max - min);
+  const padding = span * paddingRatio;
+  const minBound = min - padding;
+  const maxBound = max + padding;
+  const spanBound = Math.max(1e-6, maxBound - minBound);
+  return series.map((points) =>
+    points
+      .map((point, index) => {
+        const x = (index / Math.max(1, points.length - 1)) * width;
+        const y = height - ((point - minBound) / spanBound) * height;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" "),
+  );
+}
+
 function buildSamplingHistoryStore(points: SamplingQualityPoint[]): DeviceSamplingHistoryStore {
   const bucket: DeviceSamplingHistoryStore = {};
   for (const point of points) {
@@ -188,11 +215,11 @@ function appendSamplingHistoryPoint(
 
 function jitterQualityTone(jitterP99Ms: number | null): { label: string; className: string } {
   if (jitterP99Ms === null || !Number.isFinite(jitterP99Ms)) {
-    return { label: "unknown", className: "bg-[#ebe3d6] text-[#5e4f3d]" };
+    return { label: "unknown", className: "bg-[color:var(--surface-3)] text-[color:var(--text-muted)]" };
   }
-  if (jitterP99Ms <= 3) return { label: "stable", className: "bg-[#d4f3df] text-[#245f3b]" };
-  if (jitterP99Ms <= 6) return { label: "degrading", className: "bg-[#ffe3ce] text-[#824622]" };
-  return { label: "critical", className: "bg-[#f7d6cc] text-[#8b3727]" };
+  if (jitterP99Ms <= 3) return { label: "stable", className: "bg-[color:var(--success-bg)] text-[color:var(--success-text)]" };
+  if (jitterP99Ms <= 6) return { label: "degrading", className: "bg-[color:var(--warning-bg)] text-[color:var(--warning-text)]" };
+  return { label: "critical", className: "bg-[color:var(--danger-bg)] text-[color:var(--danger-text)]" };
 }
 
 const NAV_ITEMS: { id: Tab; label: string; icon: ReactNode }[] = [
@@ -207,12 +234,12 @@ const NAV_ITEMS: { id: Tab; label: string; icon: ReactNode }[] = [
     ),
   },
   {
-    id: "preflight",
-    label: "Preflight",
+    id: "live",
+    label: "Live Capture",
     icon: (
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M6 2h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z" />
-        <path d="M6 7l1.5 1.5L10 6M6 11h6" />
+        <path d="M2 9c1-2 2-4 3-3s2 4 3 2 2-5 3-3 2 3 3 2" />
+        <line x1="2" y1="16" x2="16" y2="16" />
       </svg>
     ),
   },
@@ -238,32 +265,22 @@ const NAV_ITEMS: { id: Tab; label: string; icon: ReactNode }[] = [
     ),
   },
   {
-    id: "graph",
-    label: "Sensor Graph",
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M2 9c1-2 2-4 3-3s2 4 3 2 2-5 3-3 2 3 3 2" />
-        <line x1="2" y1="16" x2="16" y2="16" />
-      </svg>
-    ),
-  },
-  {
-    id: "annotations",
-    label: "Annotations",
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M3 4a1 1 0 0 1 1-1h7l4 4v7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4Z" />
-        <path d="M11 3v4h4M6 9h6M6 12h4" />
-      </svg>
-    ),
-  },
-  {
     id: "artifacts",
     label: "Artifacts",
     icon: (
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M2 5h14v2H2zM3 7h12v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z" />
         <path d="M7 11h4" />
+      </svg>
+    ),
+  },
+  {
+    id: "preflight",
+    label: "Preflight",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M6 2h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z" />
+        <path d="M6 7l1.5 1.5L10 6M6 11h6" />
       </svg>
     ),
   },
@@ -301,14 +318,40 @@ export default function Home() {
   const [showFinalizeIncompleteModal, setShowFinalizeIncompleteModal] = useState(false);
   const [finalizeIncompleteReason, setFinalizeIncompleteReason] = useState("");
   const [webcamFrameTick, setWebcamFrameTick] = useState(0);
+  const [localPreviewStream, setLocalPreviewStream] = useState<MediaStream | null>(null);
+  const localPreviewRef = useRef<HTMLVideoElement | null>(null);
+  const [webcamAspectRatio, setWebcamAspectRatio] = useState<number | null>(null);
+  const [mockVideoEnabled, setMockVideoEnabled] = useState(false);
 
   const [startBarrierUnixNs, setStartBarrierUnixNs] = useState<number | null>(null);
   const [countdownMs, setCountdownMs] = useState<number>(0);
   const [previewByDevice, setPreviewByDevice] = useState<DevicePreviewStore>({});
   const [samplingHistoryByDevice, setSamplingHistoryByDevice] = useState<DeviceSamplingHistoryStore>({});
 
-  const [activeTab, setActiveTab] = useState<Tab>("command");
+  const [activeTab, setActiveTab] = useState<Tab>("live");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const activeTabRef = useRef<Tab>(activeTab);
+  const [liveDeviceId, setLiveDeviceId] = useState("");
+  const [mockEnabled, setMockEnabled] = useState(false);
+  const mockPhaseRef = useRef(0);
+  const mockDeviceBase = useMemo<DeviceResponse>(
+    () => ({
+      device_id: MOCK_DEVICE_ID,
+      device_role: "mock",
+      display_name: "Mock IMU",
+      ip_address: "127.0.0.1",
+      connected: true,
+      recording: false,
+      battery_percent: 86,
+      storage_free_mb: 1024,
+      effective_hz: 100,
+      interval_p99_ms: 10,
+      jitter_p99_ms: 2,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }),
+    [],
+  );
 
   const selectedSession = sessionId.trim();
   const activeAnnotations = annotations.filter((item) => !item.ended_at && !item.deleted);
@@ -329,6 +372,14 @@ export default function Home() {
     return 0;
   }, [video, videoMetadata]);
 
+  const previewAspectRatio = useMemo(() => {
+    if (webcamAspectRatio && webcamAspectRatio > 0) return webcamAspectRatio;
+    if (videoMetadata?.width && videoMetadata?.height) {
+      return Math.max(0.1, videoMetadata.width / videoMetadata.height);
+    }
+    return 16 / 9;
+  }, [videoMetadata?.height, videoMetadata?.width, webcamAspectRatio]);
+
   const famsReady = useMemo(() => {
     const hasManifest = artifacts.some((item) => item.artifact_type === "manifest" && item.exists);
     const hasExport = artifacts.some((item) => item.artifact_type === "export_zip" && item.exists);
@@ -346,6 +397,98 @@ export default function Home() {
     () => requiredBindings.length > 0 && requiredOnlineCount === requiredBindings.length,
     [requiredBindings.length, requiredOnlineCount],
   );
+
+  const devicesForUi = useMemo(() => {
+    if (!mockEnabled) return devices;
+    const hasMock = devices.some((item) => item.device_id === MOCK_DEVICE_ID);
+    const mockDevice: DeviceResponse = {
+      ...mockDeviceBase,
+      recording: session?.status === "running",
+      updated_at: new Date().toISOString(),
+    };
+    return hasMock
+      ? devices.map((item) => (item.device_id === MOCK_DEVICE_ID ? mockDevice : item))
+      : [mockDevice, ...devices];
+  }, [devices, mockDeviceBase, mockEnabled, session?.status]);
+
+  const onlineDevices = useMemo(
+    () => devicesForUi.filter((item) => item.connected).length,
+    [devicesForUi],
+  );
+  const liveDeviceIds = useMemo(() => Object.keys(previewByDevice), [previewByDevice]);
+  const activeLiveDeviceId = liveDeviceId || liveDeviceIds[0] || "";
+  const livePoints = activeLiveDeviceId ? previewByDevice[activeLiveDeviceId] ?? [] : [];
+  const liveHz = devicesForUi.find((item) => item.device_id === activeLiveDeviceId)?.effective_hz ?? null;
+  const latestLiveSample = useMemo(() => livePoints.at(-1) ?? null, [livePoints]);
+
+  const [accXLine, accYLine, accZLine] = useMemo(() => {
+    const series = [
+      livePoints.map((item) => item.accX),
+      livePoints.map((item) => item.accY),
+      livePoints.map((item) => item.accZ),
+    ];
+    return sharedSparkline(series, 640, 200);
+  }, [livePoints]);
+
+  const [gyroXLine, gyroYLine, gyroZLine] = useMemo(() => {
+    const series = [
+      livePoints.map((item) => item.gyroX),
+      livePoints.map((item) => item.gyroY),
+      livePoints.map((item) => item.gyroZ),
+    ];
+    return sharedSparkline(series, 640, 200);
+  }, [livePoints]);
+
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (!mockEnabled) {
+      setPreviewByDevice((prev) => {
+        if (!prev[MOCK_DEVICE_ID]) return prev;
+        const next = { ...prev };
+        delete next[MOCK_DEVICE_ID];
+        return next;
+      });
+      return;
+    }
+
+    setPreviewByDevice((prev) => (prev[MOCK_DEVICE_ID] ? prev : { ...prev, [MOCK_DEVICE_ID]: [] }));
+
+    const interval = globalThis.setInterval(() => {
+      if (activeTabRef.current !== "live") return;
+      const phase = mockPhaseRef.current;
+      mockPhaseRef.current += 0.18;
+      const accX = Math.sin(phase) * 0.6 + Math.sin(phase * 0.2) * 0.2;
+      const accY = Math.cos(phase * 0.9) * 0.5;
+      const accZ = Math.sin(phase * 1.1 + 1.2) * 0.4;
+      const gyroX = Math.sin(phase * 0.7) * 40;
+      const gyroY = Math.cos(phase * 0.8 + 0.6) * 35;
+      const gyroZ = Math.sin(phase * 1.3) * 30;
+      const now = Date.now();
+      setPreviewByDevice((prev) => {
+        const current = prev[MOCK_DEVICE_ID] ?? [];
+        const next = [...current, { x: now, accX, accY, accZ, gyroX, gyroY, gyroZ }].filter(
+          (item) => now - item.x <= PREVIEW_WINDOW_MS,
+        );
+        return { ...prev, [MOCK_DEVICE_ID]: next };
+      });
+    }, 120);
+
+    return () => globalThis.clearInterval(interval);
+  }, [mockEnabled]);
+
+  useEffect(() => {
+    if (!liveDeviceIds.length) {
+      setLiveDeviceId("");
+      return;
+    }
+    if (!liveDeviceId || !liveDeviceIds.includes(liveDeviceId)) {
+      setLiveDeviceId(liveDeviceIds[0]);
+    }
+  }, [liveDeviceId, liveDeviceIds]);
 
   const allDevicesWithHz = useMemo(
     () => devices.length > 0 && devices.every((item) => item.effective_hz !== null),
@@ -469,10 +612,10 @@ export default function Home() {
     setAnonymizeState("pending");
     setAnonymizeResult(null);
     setAnonymizeState("running");
-    const result = await anonymizeVideo(targetSession);
+    const result = await anonymizeVideo(targetSession, { useMock: mockVideoEnabled });
     setAnonymizeResult(result);
     setAnonymizeState(result.status === "completed" ? "completed" : "failed");
-  }, []);
+  }, [mockVideoEnabled]);
 
   const reloadBaseData = useCallback(async () => {
     const [healthPayload, preflightPayload, devicePayload] = await Promise.all([
@@ -484,6 +627,42 @@ export default function Home() {
     setPreflight(preflightPayload);
     setDevices(devicePayload);
   }, []);
+
+  const stopLocalPreview = useCallback((stream: MediaStream | null) => {
+    if (!stream) return;
+    stream.getTracks().forEach((track) => track.stop());
+  }, []);
+
+  const requestWebcamPermission = useCallback(async () => {
+    setError(null);
+    setInfo("Requesting webcam permission...");
+    try {
+      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+        setInfo("Webcam permission not supported in this browser");
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        const settings = track.getSettings();
+        if (settings.width && settings.height) {
+          setWebcamAspectRatio(settings.width / settings.height);
+        } else if (typeof settings.aspectRatio === "number" && settings.aspectRatio > 0) {
+          setWebcamAspectRatio(settings.aspectRatio);
+        }
+      }
+      setLocalPreviewStream((prev) => {
+        stopLocalPreview(prev);
+        return stream;
+      });
+      setInfo("Webcam permission granted");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Webcam permission denied");
+    } finally {
+      setWebcamFrameTick((prev) => prev + 1);
+      void reloadBaseData();
+    }
+  }, [reloadBaseData, stopLocalPreview]);
 
   useEffect(() => {
     let alive = true;
@@ -514,11 +693,32 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (localPreviewRef.current) {
+      localPreviewRef.current.srcObject = localPreviewStream;
+    }
+  }, [localPreviewStream]);
+
+  useEffect(() => {
+    if (activeTab === "video") return;
+    if (localPreviewStream) {
+      stopLocalPreview(localPreviewStream);
+      setLocalPreviewStream(null);
+    }
+  }, [activeTab, localPreviewStream, stopLocalPreview]);
+
+  useEffect(() => {
+    if (activeTab !== "video") return;
     const timer = globalThis.setInterval(() => {
       setWebcamFrameTick((prev) => prev + 1);
     }, 2000);
     return () => globalThis.clearInterval(timer);
-  }, []);
+  }, [activeTab]);
+
+  useEffect(() => {
+    return () => {
+      stopLocalPreview(localPreviewStream);
+    };
+  }, [localPreviewStream, stopLocalPreview]);
 
   useEffect(() => {
     if (!selectedSession) return;
@@ -536,7 +736,7 @@ export default function Home() {
       if (payload.type === "DASHBOARD_SNAPSHOT" && isJsonArray(payload.devices)) {
         setDevices((prev) => mergeDeviceSnapshot(prev, payload.devices as Array<Record<string, unknown>>));
       }
-      if (payload.type === "SENSOR_PREVIEW") {
+      if (payload.type === "SENSOR_PREVIEW" && activeTabRef.current === "live") {
         const deviceId = String(payload.device_id ?? "unknown");
         const lastSample = (payload.preview as { last_sample?: Record<string, unknown> } | undefined)?.last_sample;
         const accX = Number(lastSample?.acc_x_g ?? 0);
@@ -634,15 +834,15 @@ export default function Home() {
 
   const sessionStatusDot =
     session?.status === "running"
-      ? "bg-[#8de37a] shadow-[0_0_6px_#8de37a80]"
+      ? "bg-[#35c27b] shadow-[0_0_6px_rgba(53,194,123,0.6)]"
       : session?.status === "stopped"
-        ? "bg-[#f0a36f]"
+        ? "bg-[#f59e6b]"
         : session?.status === "finalized"
-          ? "bg-[#d4b782]"
-          : "bg-[#4a3d31]";
+          ? "bg-[#94a3b8]"
+          : "bg-[#475569]";
 
   return (
-    <div className="flex min-h-dvh bg-[radial-gradient(80%_110%_at_10%_5%,#f4e8ce_0%,#f8f3e6_42%,#efe7d8_100%)] text-[#1e1b16]">
+    <div className="flex min-h-dvh bg-[radial-gradient(120%_140%_at_0%_0%,#f8fafc_0%,#eef2f7_55%,#e2e8f0_100%)] text-[color:var(--foreground)]">
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
@@ -654,16 +854,20 @@ export default function Home() {
 
       {/* ── Sidebar ── */}
       <aside
-        className={`fixed left-0 top-0 z-30 flex h-full w-56 flex-col bg-[#17120c] shadow-[4px_0_32px_rgba(0,0,0,0.45)] transition-transform duration-300 ease-in-out lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
+        className={`fixed left-0 top-0 z-30 flex h-full w-56 flex-col bg-[color:var(--sidebar-bg)] shadow-[var(--shadow-sidebar)] transition-transform duration-300 ease-in-out lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
       >
         {/* Brand */}
-        <div className="flex items-center justify-between border-b border-white/8 px-5 py-5">
+        <div className="flex items-center justify-between border-b border-[color:var(--sidebar-border)] px-5 py-5">
           <div>
-            <p className="font-display text-[10px] uppercase tracking-[0.45em] text-[#d4b782]">IMU Collector</p>
-            <p className="mt-0.5 text-sm font-semibold leading-snug text-[#f4ecdf]">Command Deck</p>
+            <p className="font-display text-[10px] uppercase tracking-[0.45em] text-[color:var(--sidebar-muted)]">
+              IMU Collector
+            </p>
+            <p className="mt-0.5 text-sm font-semibold leading-snug text-[color:var(--sidebar-text)]">
+              Command Deck
+            </p>
           </div>
           <button
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-[#6a5542] transition-colors hover:bg-white/8 hover:text-[#f4ecdf] lg:hidden"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-[color:var(--sidebar-muted)] transition-colors hover:bg-white/10 hover:text-[color:var(--sidebar-text)] lg:hidden"
             onClick={() => setSidebarOpen(false)}
             aria-label="Close sidebar"
           >
@@ -674,28 +878,30 @@ export default function Home() {
         </div>
 
         {/* Nav items */}
-        <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5" aria-label="Dashboard navigation">
+        <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-3" aria-label="Dashboard navigation">
           {NAV_ITEMS.map((item) => (
             <button
               key={item.id}
               onClick={() => { setActiveTab(item.id); setSidebarOpen(false); }}
               className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150 ${
                 activeTab === item.id
-                  ? "bg-[#d46f4a]/14 text-[#f0a36f] ring-1 ring-[#d46f4a]/28"
-                  : "text-[#8a7260] hover:bg-white/6 hover:text-[#e8d9c6]"
+                  ? "bg-[color:var(--sidebar-accent-bg)] text-[color:var(--sidebar-text)] ring-1 ring-[color:rgba(47,111,237,0.45)]"
+                  : "text-[color:var(--sidebar-muted)] hover:bg-[color:var(--sidebar-hover)] hover:text-[color:var(--sidebar-text)]"
               }`}
               aria-current={activeTab === item.id ? "page" : undefined}
             >
               <span
                 className={`shrink-0 transition-colors ${
-                  activeTab === item.id ? "text-[#d46f4a]" : "text-[#5a4836] group-hover:text-[#8a7260]"
+                  activeTab === item.id
+                    ? "text-[color:var(--sidebar-accent)]"
+                    : "text-[color:var(--sidebar-muted)] group-hover:text-[color:var(--sidebar-text)]"
                 }`}
               >
                 {item.icon}
               </span>
               {item.label}
-              {item.id === "annotations" && activeAnnotations.length > 0 && (
-                <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-[#d46f4a]/30 px-1 text-[10px] font-semibold text-[#f0a36f]">
+              {item.id === "live" && activeAnnotations.length > 0 && (
+                <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-[color:rgba(47,111,237,0.25)] px-1 text-[10px] font-semibold text-[#dbe7ff]">
                   {activeAnnotations.length}
                 </span>
               )}
@@ -704,15 +910,19 @@ export default function Home() {
         </nav>
 
         {/* Session status footer */}
-        <div className="border-t border-white/8 px-4 py-4">
-          <p className="text-[10px] uppercase tracking-[0.22em] text-[#4a3d31]">Session</p>
-          <p className="mt-1 truncate font-mono text-xs text-[#c8b89a]">{selectedSession || "—"}</p>
+        <div className="border-t border-[color:var(--sidebar-border)] px-4 py-4">
+          <p className="text-[10px] uppercase tracking-[0.22em] text-[color:var(--sidebar-muted)]">Session</p>
+          <p className="mt-1 truncate font-mono text-xs text-[color:var(--sidebar-text)]">
+            {selectedSession || "—"}
+          </p>
           <div className="mt-2 flex items-center gap-2">
             <span className={`h-2 w-2 shrink-0 rounded-full ${sessionStatusDot}`} />
-            <span className="text-xs text-[#8a7260]">{session?.status ?? "idle"}</span>
-            <span className="ml-auto font-mono text-xs text-[#6a5542]">{secondsToClock(elapsedSeconds)}</span>
+            <span className="text-xs text-[color:var(--sidebar-muted)]">{session?.status ?? "idle"}</span>
+            <span className="ml-auto font-mono text-xs text-[color:var(--sidebar-muted)]">
+              {secondsToClock(elapsedSeconds)}
+            </span>
           </div>
-          <p className="mt-2 text-[10px] text-[#3d3028]">
+          <p className="mt-2 text-[10px] text-[color:var(--sidebar-muted)]">
             REST {health?.rest_port ?? "—"} · WS {health?.ws_port ?? "—"}
           </p>
         </div>
@@ -721,11 +931,11 @@ export default function Home() {
       {/* ── Main area ── */}
       <div className="flex min-h-dvh w-full flex-col lg:pl-56">
         {/* Sticky top header */}
-        <header className="sticky top-0 z-10 border-b border-black/10 bg-[#f8f2e8]/96 px-4 py-3 shadow-[0_2px_16px_-8px_rgba(42,31,19,0.25)] backdrop-blur-sm lg:px-6">
+        <header className="sticky top-0 z-10 border-b border-[color:var(--stroke)] bg-[color:var(--surface)]/92 px-4 py-3 shadow-[var(--shadow-header)] backdrop-blur-sm lg:px-6">
           <div className="flex items-center gap-2">
             {/* Hamburger – mobile only */}
             <button
-              className="mr-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-black/15 bg-white/80 text-[#5e4f3d] transition-colors hover:bg-white lg:hidden"
+              className="mr-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface)] text-[color:var(--text-muted)] transition-colors hover:bg-[color:var(--surface-2)] lg:hidden"
               onClick={() => setSidebarOpen(true)}
               aria-label="Open sidebar"
             >
@@ -744,14 +954,14 @@ export default function Home() {
                 }
               }}
               placeholder="20260419_143022_A1B2C3D4"
-              className="min-w-0 flex-1 rounded-xl border border-black/20 bg-[#fffdfa] px-3 py-2 text-sm shadow-[inset_0_1px_3px_rgba(0,0,0,0.04)] placeholder:text-[#b09a80] focus:outline-none focus:ring-2 focus:ring-[#d46f4a]/30"
+              className="min-w-0 flex-1 rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface)] px-3 py-2 text-sm shadow-[inset_0_1px_3px_rgba(15,23,42,0.08)] placeholder:text-[color:var(--text-faint)] focus:outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent)]"
             />
             <button
               onClick={() => {
                 setSessionId(sessionIdInput.trim());
                 setSamplingHistoryByDevice({});
               }}
-              className="shrink-0 rounded-xl bg-[#26221b] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+              className="shrink-0 rounded-xl bg-[color:var(--accent)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[color:var(--accent-strong)]"
             >
               Connect
             </button>
@@ -761,7 +971,7 @@ export default function Home() {
                 setSessionIdInput("");
                 setSamplingHistoryByDevice({});
               }}
-              className="shrink-0 rounded-xl border border-black/20 bg-white px-3 py-2 text-sm transition-colors hover:bg-[#f8f1e6]"
+              className="shrink-0 rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface)] px-3 py-2 text-sm text-[color:var(--text-muted)] transition-colors hover:bg-[color:var(--surface-2)]"
             >
               Clear
             </button>
@@ -778,10 +988,12 @@ export default function Home() {
           </div>
 
           {error ? (
-            <p className="mt-2 rounded-lg bg-[#fbdfd6] px-3 py-2 text-sm text-[#8f2f1d]">{error}</p>
+            <p className="mt-2 rounded-lg bg-[color:var(--danger-bg)] px-3 py-2 text-sm text-[color:var(--danger-text)]">
+              {error}
+            </p>
           ) : null}
           {info !== "Dashboard ready" ? (
-            <p className="mt-1 text-xs text-[#6a5a48]">{info}</p>
+            <p className="mt-1 text-xs text-[color:var(--text-faint)]">{info}</p>
           ) : null}
         </header>
 
@@ -797,7 +1009,7 @@ export default function Home() {
                     value={overrideReason}
                     onChange={(event) => setOverrideReason(event.target.value)}
                     placeholder="override reason (optional)"
-                    className="rounded-xl border border-black/20 bg-[#fffdfa] px-3 py-2 text-sm"
+                    className="rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface)] px-3 py-2 text-sm"
                   />
                   <div className="grid grid-cols-2 gap-2">
                     <button
@@ -812,7 +1024,7 @@ export default function Home() {
                           await reloadSessionData();
                         })
                       }
-                      className="rounded-xl bg-[#d46f4a] px-3 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+                      className="rounded-xl bg-[color:var(--accent)] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[color:var(--accent-strong)]"
                     >
                       Create
                     </button>
@@ -820,7 +1032,7 @@ export default function Home() {
                       onClick={() =>
                         selectedSession && void runAction("Session devices assigned", autoAssignRequiredRoles)
                       }
-                      className="rounded-xl border border-black/20 px-3 py-2 text-sm font-medium transition-colors hover:bg-[#f8f1e6]"
+                      className="rounded-xl border border-[color:var(--stroke)] px-3 py-2 text-sm font-medium text-[color:var(--text-muted)] transition-colors hover:bg-[color:var(--surface-2)]"
                     >
                       Assign Required
                     </button>
@@ -832,7 +1044,7 @@ export default function Home() {
                           await reloadSessionData();
                         })
                       }
-                      className="rounded-xl bg-[#3f8d66] px-3 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+                      className="rounded-xl bg-[#1f8f5f] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#17724b]"
                     >
                       Start
                     </button>
@@ -851,7 +1063,7 @@ export default function Home() {
                           await reloadSessionData();
                         })
                       }
-                      className="rounded-xl bg-[#a24f3c] px-3 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+                      className="rounded-xl bg-[#b34141] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#982f2f]"
                     >
                       Stop
                     </button>
@@ -870,7 +1082,7 @@ export default function Home() {
                           await reloadSessionData();
                         })
                       }
-                      className="rounded-xl bg-[#8a7540] px-3 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+                      className="rounded-xl bg-[#9a7b3e] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#7c6231]"
                     >
                       Finalize
                     </button>
@@ -883,13 +1095,327 @@ export default function Home() {
                           setShowFinalizeIncompleteModal(true);
                         })
                       }
-                      className="rounded-xl border border-[#d4b782] bg-[#f8f1e6] px-3 py-2 text-sm font-medium text-[#5e4f3d] transition-colors hover:bg-[#f0e8d6]"
+                      className="rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface-2)] px-3 py-2 text-sm font-medium text-[color:var(--text-muted)] transition-colors hover:bg-[color:var(--surface-3)]"
                     >
                       Finalize Incomplete
                     </button>
                   </div>
                 </div>
               </Panel>
+            </div>
+          )}
+
+          {/* ── Live Capture tab ── */}
+          {activeTab === "live" && (
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+              <div className="space-y-4">
+                <Panel title="Live Recording" subtitle="Realtime sensor preview + status ringkas">
+                  <div className="flex flex-wrap items-center gap-4 text-xs text-[color:var(--text-faint)]">
+                    <span>
+                      Recording <span className="font-semibold text-[color:var(--foreground)]">{session?.status ?? "idle"}</span>
+                    </span>
+                    <span>
+                      Devices Online <span className="font-semibold text-[color:var(--foreground)]">{onlineDevices}/{devicesForUi.length}</span>
+                    </span>
+                    <span>
+                      Active Annotations <span className="font-semibold text-[color:var(--foreground)]">{activeAnnotations.length}</span>
+                    </span>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[color:var(--text-faint)]">
+                      Device
+                    </span>
+                    <select
+                      value={activeLiveDeviceId}
+                      onChange={(event) => setLiveDeviceId(event.target.value)}
+                      disabled={!liveDeviceIds.length}
+                      className="rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] px-2 py-1 text-sm text-[color:var(--foreground)]"
+                    >
+                      {liveDeviceIds.length === 0 ? (
+                        <option value="">No devices</option>
+                      ) : (
+                        liveDeviceIds.map((deviceId) => (
+                          <option key={deviceId} value={deviceId}>
+                            {deviceId}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <label className="flex items-center gap-2 text-[11px] text-[color:var(--text-faint)]">
+                      <input
+                        type="checkbox"
+                        checked={mockEnabled}
+                        onChange={(event) => setMockEnabled(event.target.checked)}
+                      />
+                      Mock device
+                    </label>
+                    <div className="ml-auto flex items-center gap-3 text-[11px] text-[color:var(--text-faint)]">
+                      <span>Hz {liveHz !== null ? liveHz.toFixed(1) : "-"}</span>
+                      <span>Window 30s</span>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid gap-3">
+                    <div className="rounded-2xl border border-[color:var(--stroke)] bg-[#0b1220] px-2 py-3">
+                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#a7b2c4]">ACC</p>
+                      <div className="mb-2 grid grid-cols-3 gap-2 text-[11px] text-[#a7b2c4]">
+                        <span>X {formatLiveValue(latestLiveSample?.accX, 3)} g</span>
+                        <span>Y {formatLiveValue(latestLiveSample?.accY, 3)} g</span>
+                        <span>Z {formatLiveValue(latestLiveSample?.accZ, 3)} g</span>
+                      </div>
+                      {livePoints.length === 0 ? (
+                        <p className="text-sm text-[#a7b2c4]">Belum ada preview stream.</p>
+                      ) : (
+                        <svg viewBox="0 0 640 180" className="h-44 w-full">
+                          <line x1="0" y1="45" x2="640" y2="45" stroke="#1f2937" strokeWidth="1" />
+                          <line x1="0" y1="90" x2="640" y2="90" stroke="#1f2937" strokeWidth="1" />
+                          <line x1="0" y1="135" x2="640" y2="135" stroke="#1f2937" strokeWidth="1" />
+                          <polyline fill="none" stroke="#7fb4ff" strokeWidth="2" points={accXLine} />
+                          <polyline fill="none" stroke="#5fd6b5" strokeWidth="2" points={accYLine} />
+                          <polyline fill="none" stroke="#f4d96b" strokeWidth="2" points={accZLine} />
+                        </svg>
+                      )}
+                      <div className="mt-2 flex items-center gap-3 text-[10px] text-[#a7b2c4]">
+                        <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#7fb4ff]" />X</span>
+                        <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#5fd6b5]" />Y</span>
+                        <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#f4d96b]" />Z</span>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-[color:var(--stroke)] bg-[#0b1220] px-2 py-3">
+                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-[#a7b2c4]">GYRO</p>
+                      <div className="mb-2 grid grid-cols-3 gap-2 text-[11px] text-[#a7b2c4]">
+                        <span>X {formatLiveValue(latestLiveSample?.gyroX, 1)} deg/s</span>
+                        <span>Y {formatLiveValue(latestLiveSample?.gyroY, 1)} deg/s</span>
+                        <span>Z {formatLiveValue(latestLiveSample?.gyroZ, 1)} deg/s</span>
+                      </div>
+                      {livePoints.length === 0 ? (
+                        <p className="text-sm text-[#a7b2c4]">Belum ada preview stream.</p>
+                      ) : (
+                        <svg viewBox="0 0 640 180" className="h-44 w-full">
+                          <line x1="0" y1="45" x2="640" y2="45" stroke="#1f2937" strokeWidth="1" />
+                          <line x1="0" y1="90" x2="640" y2="90" stroke="#1f2937" strokeWidth="1" />
+                          <line x1="0" y1="135" x2="640" y2="135" stroke="#1f2937" strokeWidth="1" />
+                          <polyline fill="none" stroke="#7fb4ff" strokeWidth="2" points={gyroXLine} />
+                          <polyline fill="none" stroke="#5fd6b5" strokeWidth="2" points={gyroYLine} />
+                          <polyline fill="none" stroke="#f4d96b" strokeWidth="2" points={gyroZLine} />
+                        </svg>
+                      )}
+                      <div className="mt-2 flex items-center gap-3 text-[10px] text-[#a7b2c4]">
+                        <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#7fb4ff]" />X</span>
+                        <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#5fd6b5]" />Y</span>
+                        <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-[#f4d96b]" />Z</span>
+                      </div>
+                    </div>
+                  </div>
+                </Panel>
+              </div>
+              <div className="space-y-4">
+                <Panel title="Annotations" subtitle="Start/stop/edit/delete selama recording">
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <input
+                      value={newLabel}
+                      onChange={(event) => setNewLabel(event.target.value)}
+                      className="rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] px-2 py-1.5 text-sm"
+                      placeholder="label"
+                    />
+                    <input
+                      value={newNote}
+                      onChange={(event) => setNewNote(event.target.value)}
+                      className="rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] px-2 py-1.5 text-sm"
+                      placeholder="note"
+                    />
+                    <button
+                      onClick={() =>
+                        selectedSession &&
+                        void runAction("Annotation started", async () => {
+                          await startAnnotation(selectedSession, {
+                            label: newLabel,
+                            notes: newNote || undefined,
+                          });
+                          await reloadSessionData();
+                        })
+                      }
+                      className="rounded-lg bg-[color:var(--accent-strong)] px-2 py-1.5 text-sm text-white transition-colors hover:bg-[color:var(--accent)]"
+                    >
+                      Start Annotation
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs text-[color:var(--text-faint)]">Active: {activeAnnotations.length}</p>
+                  <div className="mt-3 max-h-[60vh] space-y-2 overflow-auto pr-1">
+                    {annotations.length === 0 ? (
+                      <p className="text-sm text-[color:var(--text-faint)]">Belum ada annotation.</p>
+                    ) : null}
+                    {annotations.map((annotation) => (
+                      <div
+                        key={annotation.annotation_id}
+                        className="rounded-2xl border border-[color:var(--stroke)] bg-[color:var(--surface)] p-3 text-xs"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-semibold text-sm">{annotation.label}</p>
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                              annotation.ended_at
+                                ? "bg-[color:var(--success-bg)] text-[color:var(--success-text)]"
+                                : "bg-[color:var(--warning-bg)] text-[color:var(--warning-text)]"
+                            }`}
+                          >
+                            {annotationStatusText(annotation)}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-[color:var(--text-muted)]">{annotation.annotation_id}</p>
+                        <p className="text-[color:var(--text-muted)]">
+                          {annotation.started_at}
+                          {annotation.ended_at ? ` → ${annotation.ended_at}` : ""}
+                        </p>
+                        <p className="text-[color:var(--text-muted)]">Duration: {annotationDurationText(annotation)}</p>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {annotation.ended_at === null ? (
+                            <button
+                              onClick={() =>
+                                selectedSession &&
+                                void runAction("Annotation stopped", async () => {
+                                  await stopAnnotation(selectedSession, annotation.annotation_id);
+                                  await reloadSessionData();
+                                })
+                              }
+                              className="rounded-lg bg-[#b34141] px-2.5 py-1 text-xs text-white transition-colors hover:bg-[#982f2f]"
+                            >
+                              Stop
+                            </button>
+                          ) : null}
+                          <button
+                            onClick={() =>
+                              void runAction("Annotation patched", async () => {
+                                const nextLabel = globalThis.prompt("Label baru", annotation.label);
+                                if (nextLabel === null || nextLabel.trim().length === 0) return;
+                                const nextNotes = globalThis.prompt(
+                                  "Notes baru (kosongkan untuk null)",
+                                  annotation.notes ?? "",
+                                );
+                                if (nextNotes === null) return;
+                                const nextStartedAt = globalThis.prompt(
+                                  "Started at (ISO-8601)",
+                                  annotation.started_at,
+                                );
+                                if (nextStartedAt === null || parseIsoTimestamp(nextStartedAt) === null) {
+                                  throw new Error("started_at harus format ISO-8601 valid");
+                                }
+                                const nextEndedAtInput = globalThis.prompt(
+                                  "Ended at (ISO-8601, kosongkan jika active)",
+                                  annotation.ended_at ?? "",
+                                );
+                                if (nextEndedAtInput === null) return;
+                                const normalizedEndedAt = nextEndedAtInput.trim();
+                                if (normalizedEndedAt && parseIsoTimestamp(normalizedEndedAt) === null) {
+                                  throw new Error("ended_at harus format ISO-8601 valid");
+                                }
+                                await patchAnnotation(annotation.annotation_id, {
+                                  label: nextLabel.trim(),
+                                  notes: nextNotes.trim() ? nextNotes.trim() : undefined,
+                                  started_at: nextStartedAt,
+                                  ended_at: normalizedEndedAt ? normalizedEndedAt : null,
+                                });
+                                await reloadSessionData();
+                              })
+                            }
+                            className="rounded-lg border border-[color:var(--stroke)] px-2.5 py-1 text-xs text-[color:var(--text-muted)] transition-colors hover:bg-[color:var(--surface-2)]"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() =>
+                              void runAction("Annotation deleted", async () => {
+                                await deleteAnnotation(annotation.annotation_id);
+                                await reloadSessionData();
+                              })
+                            }
+                            className="rounded-lg border border-[color:var(--danger-text)] px-2.5 py-1 text-xs text-[color:var(--danger-text)] transition-colors hover:bg-[color:var(--danger-bg)]"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Panel>
+
+                <Panel title="Quick Actions" subtitle="Start/stop/finalize tanpa pindah tab">
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <button
+                      onClick={() =>
+                        selectedSession &&
+                        void runAction("Session started", async () => {
+                          await startSession(selectedSession);
+                          await reloadSessionData();
+                        })
+                      }
+                      className="rounded-xl bg-[#1f8f5f] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#17724b] disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={!selectedSession}
+                    >
+                      Start
+                    </button>
+                    <button
+                      onClick={() =>
+                        selectedSession &&
+                        void runAction("Stop requested", async () => {
+                          if (anonymizeMode) {
+                            const confirmed = globalThis.confirm(
+                              "Toggle anonymize aktif. Jalankan anonymize setelah STOP?",
+                            );
+                            if (!confirmed) return;
+                          }
+                          await stopSession(selectedSession);
+                          if (anonymizeMode) await runAnonymize(selectedSession);
+                          await reloadSessionData();
+                        })
+                      }
+                      className="rounded-xl bg-[#b34141] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#982f2f] disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={!selectedSession}
+                    >
+                      Stop
+                    </button>
+                    <button
+                      onClick={() =>
+                        selectedSession &&
+                        void runAction("Session finalized", async () => {
+                          if (anonymizeMode) {
+                            const confirmed = globalThis.confirm(
+                              "Toggle anonymize aktif. Jalankan anonymize setelah FINALIZE?",
+                            );
+                            if (!confirmed) return;
+                          }
+                          await finalizeSession(selectedSession, false);
+                          if (anonymizeMode) await runAnonymize(selectedSession);
+                          await reloadSessionData();
+                        })
+                      }
+                      className="rounded-xl bg-[#9a7b3e] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#7c6231] disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={!selectedSession}
+                    >
+                      Finalize
+                    </button>
+                    <button
+                      onClick={() =>
+                        selectedSession &&
+                        void runAction("Completeness checked", async () => {
+                          const report = await fetchSessionCompleteness(selectedSession);
+                          setCompleteness(report);
+                          setShowFinalizeIncompleteModal(true);
+                        })
+                      }
+                      className="rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface-2)] px-3 py-2 text-sm font-medium text-[color:var(--text-muted)] transition-colors hover:bg-[color:var(--surface-3)] disabled:cursor-not-allowed disabled:opacity-40"
+                      disabled={!selectedSession}
+                    >
+                      Finalize Incomplete
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs text-[color:var(--text-faint)]">
+                    Gunakan Session Controls untuk create session dan assign device.
+                  </p>
+                </Panel>
+              </div>
             </div>
           )}
 
@@ -950,9 +1476,9 @@ export default function Home() {
               <Panel title="Devices" subtitle="Transport status + sampling quality trend (interval/jitter p99)">
                 <div className="space-y-3">
                   {devices.length === 0 ? (
-                    <p className="text-sm text-[#6f5b45]">Belum ada device terdeteksi.</p>
+                    <p className="text-sm text-[color:var(--text-faint)]">Belum ada device terdeteksi.</p>
                   ) : null}
-                  {devices.map((device) => {
+                  {devicesForUi.map((device) => {
                     const trend = samplingHistoryByDevice[device.device_id] ?? [];
                     const intervalSeries = trend
                       .map((item) => item.interval_p99_ms)
@@ -968,28 +1494,28 @@ export default function Home() {
                     return (
                       <div
                         key={device.device_id}
-                        className="rounded-2xl border border-black/10 bg-[#f8f1e6] p-3 text-xs"
+                        className="rounded-2xl border border-[color:var(--stroke)] bg-[color:var(--surface-2)] p-3 text-xs"
                       >
                         <div className="flex items-center justify-between">
                           <span className="font-semibold text-sm">{device.device_id}</span>
                           <span
                             className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
                               device.connected
-                                ? "bg-[#d4f3df] text-[#245f3b]"
-                                : "bg-[#f7d6cc] text-[#8b3727]"
+                                ? "bg-[color:var(--success-bg)] text-[color:var(--success-text)]"
+                                : "bg-[color:var(--danger-bg)] text-[color:var(--danger-text)]"
                             }`}
                           >
                             {device.connected ? "online" : "offline"}
                           </span>
                         </div>
-                        <div className="mt-1.5 grid grid-cols-3 gap-2 text-[#5f4d39]">
+                        <div className="mt-1.5 grid grid-cols-3 gap-2 text-[color:var(--text-muted)]">
                           <span>Role: {device.device_role}</span>
                           <span>Battery: {device.battery_percent ?? "-"}%</span>
                           <span>Hz: {device.effective_hz?.toFixed(1) ?? "-"}</span>
                         </div>
-                        <div className="mt-2 rounded-xl border border-black/10 bg-[#fffaf2] p-2">
+                        <div className="mt-2 rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface)] p-2">
                           <div className="mb-1.5 flex items-center justify-between">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[#5b4a37]">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[color:var(--text-muted)]">
                               Sampling trend
                             </p>
                             <span
@@ -998,7 +1524,7 @@ export default function Home() {
                               {quality.label}
                             </span>
                           </div>
-                          <div className="grid gap-1 text-[11px] text-[#5f4d39]">
+                          <div className="grid gap-1 text-[11px] text-[color:var(--text-muted)]">
                             <div className="flex items-center justify-between">
                               <span>Interval p99</span>
                               <span>
@@ -1016,21 +1542,21 @@ export default function Home() {
                               </span>
                             </div>
                           </div>
-                          <svg viewBox="0 0 240 40" className="mt-2 h-10 w-full rounded-md bg-[#1b150f]">
+                          <svg viewBox="0 0 240 40" className="mt-2 h-10 w-full rounded-md bg-[#0b1220]">
                             <line
                               x1="0" y1="20" x2="240" y2="20"
-                              stroke="#8f7653" strokeDasharray="4 4" strokeWidth="1" opacity="0.4"
+                              stroke="#5c6b82" strokeDasharray="4 4" strokeWidth="1" opacity="0.4"
                             />
-                            <polyline fill="none" stroke="#f0a36f" strokeWidth="2" points={intervalLine} />
+                            <polyline fill="none" stroke="#5b8cff" strokeWidth="2" points={intervalLine} />
                           </svg>
-                          <svg viewBox="0 0 240 40" className="mt-1 h-10 w-full rounded-md bg-[#131911]">
+                          <svg viewBox="0 0 240 40" className="mt-1 h-10 w-full rounded-md bg-[#0b1a12]">
                             <line
                               x1="0" y1="20" x2="240" y2="20"
-                              stroke="#6f8b67" strokeDasharray="4 4" strokeWidth="1" opacity="0.4"
+                              stroke="#4d6b5f" strokeDasharray="4 4" strokeWidth="1" opacity="0.4"
                             />
-                            <polyline fill="none" stroke="#8de37a" strokeWidth="2" points={jitterLine} />
+                            <polyline fill="none" stroke="#37d390" strokeWidth="2" points={jitterLine} />
                           </svg>
-                          <p className="mt-1 text-[10px] text-[#6b5842]">
+                          <p className="mt-1 text-[10px] text-[color:var(--text-faint)]">
                             target {SAMPLING_TARGET_INTERVAL_MS} ms · history {trend.length} titik
                           </p>
                         </div>
@@ -1047,7 +1573,7 @@ export default function Home() {
             <div className="max-w-2xl space-y-4">
               <Panel title="Video Recorder" subtitle="Status, elapsed, webcam preview">
                 <div className="space-y-2 text-sm">
-                  <div className="rounded-xl border border-black/10 bg-[#f8f1e6] p-3">
+                  <div className="rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface-2)] p-3">
                     <p>
                       Video status: <strong>{video?.status ?? "idle"}</strong>
                     </p>
@@ -1055,22 +1581,72 @@ export default function Home() {
                     <p>Elapsed video: {secondsToClock(videoElapsedSeconds)}</p>
                     <p>Dropped frame estimate: {video?.dropped_frame_estimate ?? 0}</p>
                     <p>Webcam preview: {preflight?.webcam_preview_ok ? "ready sebelum record" : "not ready"}</p>
-                    <Image
-                      src={webcamSnapshot}
-                      alt="Webcam snapshot"
-                      width={640}
-                      height={360}
-                      unoptimized
-                      className="mt-2 h-40 w-full rounded-xl border border-black/10 object-cover"
-                      onError={() => {
-                        setInfo("Webcam snapshot endpoint belum tersedia / kamera tidak bisa dibaca");
-                      }}
-                    />
-                    <p className="mt-1 text-xs text-[#6f5a45]">
-                      Preview menggunakan snapshot JPEG periodik dari backend.
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => void requestWebcamPermission()}
+                        className="rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] px-3 py-1.5 text-xs text-[color:var(--text-muted)] transition-colors hover:bg-[color:var(--surface-2)]"
+                      >
+                        Re-ask webcam permission
+                      </button>
+                      {localPreviewStream ? (
+                        <button
+                          onClick={() => {
+                            stopLocalPreview(localPreviewStream);
+                            setLocalPreviewStream(null);
+                          }}
+                          className="rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] px-3 py-1.5 text-xs text-[color:var(--text-muted)] transition-colors hover:bg-[color:var(--surface-2)]"
+                        >
+                          Stop preview
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      <div
+                        className="rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface)]"
+                        style={{ aspectRatio: previewAspectRatio }}
+                      >
+                        {localPreviewStream ? (
+                          <video
+                            ref={localPreviewRef}
+                            autoPlay
+                            playsInline
+                            muted
+                            onLoadedMetadata={(event) => {
+                              const videoEl = event.currentTarget;
+                              if (videoEl.videoWidth && videoEl.videoHeight) {
+                                setWebcamAspectRatio(videoEl.videoWidth / videoEl.videoHeight);
+                              }
+                            }}
+                            className="h-full w-full rounded-xl object-contain"
+                          />
+                        ) : (
+                          <div className="flex h-full items-center justify-center rounded-xl text-xs text-[color:var(--text-faint)]">
+                            Local preview inactive
+                          </div>
+                        )}
+                      </div>
+                      <div
+                        className="relative w-full overflow-hidden rounded-xl border border-[color:var(--stroke)]"
+                        style={{ aspectRatio: previewAspectRatio }}
+                      >
+                        <Image
+                          src={webcamSnapshot}
+                          alt="Webcam snapshot"
+                          fill
+                          sizes="(min-width: 1024px) 640px, 100vw"
+                          unoptimized
+                          className="object-contain"
+                          onError={() => {
+                            setInfo("Webcam snapshot endpoint belum tersedia / kamera tidak bisa dibaca");
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <p className="mt-1 text-xs text-[color:var(--text-faint)]">
+                      Local preview dari browser. Snapshot JPEG diambil periodik dari backend.
                     </p>
                     {videoMetadata ? (
-                      <div className="mt-2 rounded-lg border border-black/10 bg-[#fffdf9] p-2 text-xs">
+                      <div className="mt-2 rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] p-2 text-xs">
                         <p>codec: {videoMetadata.codec}</p>
                         <p>
                           size: {videoMetadata.width}x{videoMetadata.height} @ {videoMetadata.fps.toFixed(1)} fps
@@ -1084,7 +1660,7 @@ export default function Home() {
 
               <Panel title="Clock Sync" subtitle="Start barrier, sync quality, anonymize">
                 <div className="space-y-2 text-sm">
-                  <div className="rounded-xl border border-black/10 bg-[#f8f1e6] p-3">
+                  <div className="rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface-2)] p-3">
                     <p>
                       Sync quality: <strong>{syncReport?.overall_sync_quality ?? "unknown"}</strong>
                     </p>
@@ -1097,6 +1673,14 @@ export default function Home() {
                       />
                       <span>Anonymize saat stop/finalize</span>
                     </label>
+                    <label className="mt-2 flex items-center gap-2 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={mockVideoEnabled}
+                        onChange={(event) => setMockVideoEnabled(event.target.checked)}
+                      />
+                      <span>Mock video (Fall-Sample.mp4)</span>
+                    </label>
                     <button
                       onClick={() =>
                         selectedSession &&
@@ -1105,7 +1689,7 @@ export default function Home() {
                           await reloadSessionData();
                         })
                       }
-                      className="mt-2 rounded-lg bg-[#201911] px-3 py-1.5 text-xs text-white transition-opacity hover:opacity-90"
+                      className="mt-2 rounded-lg bg-[color:var(--accent-strong)] px-3 py-1.5 text-xs text-white transition-colors hover:bg-[color:var(--accent)]"
                     >
                       Anonymize Now
                     </button>
@@ -1115,7 +1699,7 @@ export default function Home() {
                       anonymize: {anonymizeState}
                     </p>
                     {anonymizeResult ? (
-                      <div className="mt-2 rounded-lg border border-black/10 bg-[#fffdf9] p-2 text-xs">
+                      <div className="mt-2 rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] p-2 text-xs">
                         <p>source: {anonymizeResult.source_file_path}</p>
                         <p>output: {anonymizeResult.output_file_path ?? "-"}</p>
                         <p>metadata: {anonymizeResult.metadata_file_path ?? "-"}</p>
@@ -1123,192 +1707,6 @@ export default function Home() {
                       </div>
                     ) : null}
                   </div>
-                </div>
-              </Panel>
-            </div>
-          )}
-
-          {/* ── Sensor Graph tab ── */}
-          {activeTab === "graph" && (
-            <div className="max-w-3xl">
-              <Panel title="Realtime Sensor Graph" subtitle="Rolling 30s window dari event SENSOR_PREVIEW">
-                <div className="space-y-3">
-                  {Object.entries(previewByDevice).length === 0 ? (
-                    <p className="text-sm text-[#6f5b45]">Belum ada preview stream.</p>
-                  ) : null}
-                  {Object.entries(previewByDevice).map(([deviceId, points]) => {
-                    const accXLine = sparkline(points.map((item) => item.accX));
-                    const accYLine = sparkline(points.map((item) => item.accY));
-                    const accZLine = sparkline(points.map((item) => item.accZ));
-                    const gyroXLine = sparkline(points.map((item) => item.gyroX));
-                    const gyroYLine = sparkline(points.map((item) => item.gyroY));
-                    const gyroZLine = sparkline(points.map((item) => item.gyroZ));
-                    const hz = devices.find((item) => item.device_id === deviceId)?.effective_hz;
-                    return (
-                      <div key={deviceId} className="rounded-2xl border border-black/10 bg-[#fffdf9] p-3">
-                        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-[#6f5a45]">
-                          {deviceId} · Hz {hz?.toFixed(1) ?? "-"}
-                        </p>
-                        <p className="mb-1 text-[11px] text-[#8a7260]">Accelerometer (X/Y/Z)</p>
-                        <svg viewBox="0 0 280 84" className="h-24 w-full rounded-xl bg-[#1d160f]">
-                          <polyline fill="none" stroke="#f0a36f" strokeWidth="2" points={accXLine} />
-                          <polyline fill="none" stroke="#9ae56f" strokeWidth="2" points={accYLine} />
-                          <polyline fill="none" stroke="#f66f83" strokeWidth="2" points={accZLine} />
-                        </svg>
-                        <div className="mt-1 mb-2 flex gap-3 text-[10px] text-[#8a7260]">
-                          <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-[#f0a36f]" />X</span>
-                          <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-[#9ae56f]" />Y</span>
-                          <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-[#f66f83]" />Z</span>
-                        </div>
-                        <p className="mb-1 text-[11px] text-[#8a7260]">Gyroscope (X/Y/Z)</p>
-                        <svg viewBox="0 0 280 84" className="mt-1 h-24 w-full rounded-xl bg-[#111a1d]">
-                          <polyline fill="none" stroke="#6fe8d8" strokeWidth="2" points={gyroXLine} />
-                          <polyline fill="none" stroke="#7fb4ff" strokeWidth="2" points={gyroYLine} />
-                          <polyline fill="none" stroke="#f4d96b" strokeWidth="2" points={gyroZLine} />
-                        </svg>
-                        <div className="mt-1 flex gap-3 text-[10px] text-[#8a7260]">
-                          <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-[#6fe8d8]" />X</span>
-                          <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-[#7fb4ff]" />Y</span>
-                          <span className="flex items-center gap-1"><span className="inline-block h-2 w-4 rounded-sm bg-[#f4d96b]" />Z</span>
-                          <span className="ml-auto text-[#6f5a45]">Window 30s</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </Panel>
-            </div>
-          )}
-
-          {/* ── Annotations tab ── */}
-          {activeTab === "annotations" && (
-            <div className="max-w-2xl">
-              <Panel title="Annotations" subtitle="Start/stop/edit/delete dengan live refresh">
-                <div className="grid gap-2 sm:grid-cols-3">
-                  <input
-                    value={newLabel}
-                    onChange={(event) => setNewLabel(event.target.value)}
-                    className="rounded-lg border border-black/20 bg-[#fffdfa] px-2 py-1.5 text-sm"
-                    placeholder="label"
-                  />
-                  <input
-                    value={newNote}
-                    onChange={(event) => setNewNote(event.target.value)}
-                    className="rounded-lg border border-black/20 bg-[#fffdfa] px-2 py-1.5 text-sm"
-                    placeholder="note"
-                  />
-                  <button
-                    onClick={() =>
-                      selectedSession &&
-                      void runAction("Annotation started", async () => {
-                        await startAnnotation(selectedSession, {
-                          label: newLabel,
-                          notes: newNote || undefined,
-                        });
-                        await reloadSessionData();
-                      })
-                    }
-                    className="rounded-lg bg-[#1e1a13] px-2 py-1.5 text-sm text-white transition-opacity hover:opacity-90"
-                  >
-                    Start Annotation
-                  </button>
-                </div>
-                <p className="mt-2 text-xs text-[#6f5a45]">Active: {activeAnnotations.length}</p>
-                <div className="mt-3 max-h-[60vh] space-y-2 overflow-auto pr-1">
-                  {annotations.length === 0 ? (
-                    <p className="text-sm text-[#6f5b45]">Belum ada annotation.</p>
-                  ) : null}
-                  {annotations.map((annotation) => (
-                    <div
-                      key={annotation.annotation_id}
-                      className="rounded-2xl border border-black/10 bg-[#fffdf9] p-3 text-xs"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-semibold text-sm">{annotation.label}</p>
-                        <span
-                          className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                            annotation.ended_at
-                              ? "bg-[#ddecd8] text-[#275f2a]"
-                              : "bg-[#ffe3ce] text-[#824622]"
-                          }`}
-                        >
-                          {annotationStatusText(annotation)}
-                        </span>
-                      </div>
-                      <p className="mt-0.5 text-[#6e5a46]">{annotation.annotation_id}</p>
-                      <p className="text-[#6e5a46]">
-                        {annotation.started_at}
-                        {annotation.ended_at ? ` → ${annotation.ended_at}` : ""}
-                      </p>
-                      <p className="text-[#6e5a46]">Duration: {annotationDurationText(annotation)}</p>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {annotation.ended_at === null ? (
-                          <button
-                            onClick={() =>
-                              selectedSession &&
-                              void runAction("Annotation stopped", async () => {
-                                await stopAnnotation(selectedSession, annotation.annotation_id);
-                                await reloadSessionData();
-                              })
-                            }
-                            className="rounded-lg bg-[#845341] px-2.5 py-1 text-xs text-white transition-opacity hover:opacity-90"
-                          >
-                            Stop
-                          </button>
-                        ) : null}
-                        <button
-                          onClick={() =>
-                            void runAction("Annotation patched", async () => {
-                              const nextLabel = globalThis.prompt("Label baru", annotation.label);
-                              if (nextLabel === null || nextLabel.trim().length === 0) return;
-                              const nextNotes = globalThis.prompt(
-                                "Notes baru (kosongkan untuk null)",
-                                annotation.notes ?? "",
-                              );
-                              if (nextNotes === null) return;
-                              const nextStartedAt = globalThis.prompt(
-                                "Started at (ISO-8601)",
-                                annotation.started_at,
-                              );
-                              if (nextStartedAt === null || parseIsoTimestamp(nextStartedAt) === null) {
-                                throw new Error("started_at harus format ISO-8601 valid");
-                              }
-                              const nextEndedAtInput = globalThis.prompt(
-                                "Ended at (ISO-8601, kosongkan jika active)",
-                                annotation.ended_at ?? "",
-                              );
-                              if (nextEndedAtInput === null) return;
-                              const normalizedEndedAt = nextEndedAtInput.trim();
-                              if (normalizedEndedAt && parseIsoTimestamp(normalizedEndedAt) === null) {
-                                throw new Error("ended_at harus format ISO-8601 valid");
-                              }
-                              await patchAnnotation(annotation.annotation_id, {
-                                label: nextLabel.trim(),
-                                notes: nextNotes.trim() ? nextNotes.trim() : undefined,
-                                started_at: nextStartedAt,
-                                ended_at: normalizedEndedAt ? normalizedEndedAt : null,
-                              });
-                              await reloadSessionData();
-                            })
-                          }
-                          className="rounded-lg border border-black/20 px-2.5 py-1 text-xs transition-colors hover:bg-[#f8f1e6]"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() =>
-                            void runAction("Annotation deleted", async () => {
-                              await deleteAnnotation(annotation.annotation_id);
-                              await reloadSessionData();
-                            })
-                          }
-                          className="rounded-lg border border-[#b66656] px-2.5 py-1 text-xs text-[#b0412f] transition-colors hover:bg-[#fdf0ec]"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  ))}
                 </div>
               </Panel>
             </div>
@@ -1322,42 +1720,42 @@ export default function Home() {
                   {artifacts.map((artifact) => (
                     <div
                       key={artifact.id}
-                      className="rounded-2xl border border-black/10 bg-[#fffdf9] p-3 text-xs"
+                      className="rounded-2xl border border-[color:var(--stroke)] bg-[color:var(--surface)] p-3 text-xs"
                     >
                       <p className="font-semibold uppercase tracking-[0.14em]">{artifact.artifact_type}</p>
-                      <p className="mt-1 break-all text-[#6f5a45]">{artifact.file_path}</p>
+                      <p className="mt-1 break-all text-[color:var(--text-faint)]">{artifact.file_path}</p>
                       <p className="mt-2">exists: {String(artifact.exists)}</p>
                       <p>size: {bytesToHuman(artifact.size_bytes ?? 0)}</p>
                     </div>
                   ))}
                   {artifacts.length === 0 ? (
-                    <p className="col-span-3 text-sm text-[#6f5b45]">Belum ada artifact.</p>
+                    <p className="col-span-3 text-sm text-[color:var(--text-faint)]">Belum ada artifact.</p>
                   ) : null}
                 </div>
 
-                <div className="mt-4 rounded-2xl border border-black/10 bg-[#f8f1e6] p-4 text-xs">
+                <div className="mt-4 rounded-2xl border border-[color:var(--stroke)] bg-[color:var(--surface-2)] p-4 text-xs">
                   <p className="font-semibold uppercase tracking-[0.12em]">Upload-to-FAMS</p>
                   <p className="mt-1">
                     Dataset package:{" "}
-                    <span className={famsReady ? "text-[#1d6a39]" : "text-[#8b3727]"}>
+                    <span className={famsReady ? "text-[color:var(--success-text)]" : "text-[color:var(--danger-text)]"}>
                       {famsReady ? "ready" : "not-ready"}
                     </span>
                   </p>
                   {uploadInstructions ? (
-                    <div className="mt-3 space-y-2 text-[#5f4d39]">
+                    <div className="mt-3 space-y-2 text-[color:var(--text-muted)]">
                       <p>Local zip: {uploadInstructions.export_zip_path}</p>
                       <p>Remote target: {uploadInstructions.remote_target}</p>
                       <p>
                         Checksum SHA-256:{" "}
                         <span className="font-mono">{uploadInstructions.checksum_sha256}</span>
                       </p>
-                      <div className="rounded-xl border border-black/10 bg-[#fffdf9] p-2">
+                      <div className="rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface)] p-2">
                         <p className="font-semibold">PowerShell</p>
                         <p className="mt-1 break-all font-mono text-[11px]">
                           {uploadInstructions.command_powershell}
                         </p>
                       </div>
-                      <div className="rounded-xl border border-black/10 bg-[#fffdf9] p-2">
+                      <div className="rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface)] p-2">
                         <p className="font-semibold">Shell</p>
                         <p className="mt-1 break-all font-mono text-[11px]">
                           {uploadInstructions.command_shell}
@@ -1365,12 +1763,12 @@ export default function Home() {
                       </div>
                     </div>
                   ) : (
-                    <p className="mt-2 text-[#8b3727]">
+                    <p className="mt-2 text-[color:var(--danger-text)]">
                       Upload instruction belum tersedia (cek export zip).
                     </p>
                   )}
 
-                  <div className="mt-4 rounded-xl border border-black/10 bg-[#fffdf9] p-3">
+                  <div className="mt-4 rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface)] p-3">
                     <p className="font-semibold">Archive upload status</p>
                     <p className="mt-1">uploaded: {archiveUpload?.uploaded ? "yes" : "no"}</p>
                     <p>uploaded_at: {archiveUpload?.uploaded_at ?? "-"}</p>
@@ -1382,13 +1780,13 @@ export default function Home() {
                         value={uploadedBy}
                         onChange={(event) => setUploadedBy(event.target.value)}
                         placeholder="uploaded by"
-                        className="rounded-lg border border-black/20 bg-[#fffdfa] px-2 py-1.5"
+                        className="rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] px-2 py-1.5"
                       />
                       <input
                         value={remotePathInput}
                         onChange={(event) => setRemotePathInput(event.target.value)}
                         placeholder="remote path"
-                        className="rounded-lg border border-black/20 bg-[#fffdfa] px-2 py-1.5"
+                        className="rounded-lg border border-[color:var(--stroke)] bg-[color:var(--surface)] px-2 py-1.5"
                       />
                     </div>
                     <button
@@ -1404,7 +1802,7 @@ export default function Home() {
                           await reloadSessionData();
                         })
                       }
-                      className="mt-2 rounded-lg bg-[#1e1a13] px-3 py-1.5 text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                      className="mt-2 rounded-lg bg-[color:var(--accent-strong)] px-3 py-1.5 text-white transition-colors hover:bg-[color:var(--accent)] disabled:cursor-not-allowed disabled:opacity-40"
                       disabled={!selectedSession || !uploadInstructions}
                     >
                       Mark as uploaded
@@ -1425,32 +1823,34 @@ export default function Home() {
           aria-modal="true"
           aria-labelledby="finalize-modal-title"
         >
-          <div className="w-full max-w-2xl rounded-2xl border border-black/20 bg-white p-5 shadow-2xl">
+          <div className="w-full max-w-2xl rounded-2xl border border-[color:var(--stroke)] bg-[color:var(--surface)] p-5 shadow-2xl">
             <h3
               id="finalize-modal-title"
-              className="font-display text-sm uppercase tracking-[0.2em] text-[#755f46]"
+              className="font-display text-sm uppercase tracking-[0.2em] text-[color:var(--text-muted)]"
             >
               Finalize Incomplete
             </h3>
-            <p className="mt-1 text-sm text-[#5f4d39]">
+            <p className="mt-1 text-sm text-[color:var(--text-muted)]">
               Review completeness report lalu isi alasan wajib sebelum confirm.
             </p>
-            <div className="mt-3 max-h-64 space-y-1 overflow-auto rounded-xl border border-black/10 bg-[#f8f1e6] p-2 text-xs">
+            <div className="mt-3 max-h-64 space-y-1 overflow-auto rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface-2)] p-2 text-xs">
               <p className="font-semibold">Overall: {completeness?.complete ? "COMPLETE" : "INCOMPLETE"}</p>
               {completenessEntries.length === 0 ? <p>Tidak ada detail checks.</p> : null}
               {completenessEntries.map(([name, passed]) => (
                 <div
                   key={name}
-                  className="flex items-center justify-between rounded-lg bg-[#fffdf9] px-2 py-1"
+                  className="flex items-center justify-between rounded-lg bg-[color:var(--surface)] px-2 py-1"
                 >
                   <span>{name}</span>
-                  <span className={passed ? "text-[#245f3b]" : "text-[#8b3727]"}>
+                  <span
+                    className={passed ? "text-[color:var(--success-text)]" : "text-[color:var(--danger-text)]"}
+                  >
                     {passed ? "OK" : "FAIL"}
                   </span>
                 </div>
               ))}
               {completeness?.detail ? (
-                <pre className="mt-2 overflow-auto rounded-lg bg-[#1e1a13] p-2 text-[11px] text-[#f4ecdf]">
+                <pre className="mt-2 overflow-auto rounded-lg bg-[#0f172a] p-2 text-[11px] text-[#e2e8f0]">
                   {JSON.stringify(completeness.detail, null, 2)}
                 </pre>
               ) : null}
@@ -1459,7 +1859,7 @@ export default function Home() {
               value={finalizeIncompleteReason}
               onChange={(event) => setFinalizeIncompleteReason(event.target.value)}
               placeholder="Reason wajib diisi"
-              className="mt-3 h-24 w-full rounded-xl border border-black/20 bg-[#fffdfa] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#8b3727]/30"
+              className="mt-3 h-24 w-full rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface)] px-3 py-2 text-sm focus:outline-none focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[color:var(--accent)]"
             />
             <div className="mt-3 flex items-center justify-end gap-2">
               <button
@@ -1467,7 +1867,7 @@ export default function Home() {
                   setShowFinalizeIncompleteModal(false);
                   setFinalizeIncompleteReason("");
                 }}
-                className="rounded-xl border border-black/20 px-4 py-2 text-sm transition-colors hover:bg-[#f8f1e6]"
+                className="rounded-xl border border-[color:var(--stroke)] px-4 py-2 text-sm text-[color:var(--text-muted)] transition-colors hover:bg-[color:var(--surface-2)]"
               >
                 Cancel
               </button>
@@ -1483,7 +1883,7 @@ export default function Home() {
                   })
                 }
                 disabled={!finalizeIncompleteReason.trim()}
-                className="rounded-xl bg-[#8b3727] px-4 py-2 text-sm text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-xl bg-[#b34141] px-4 py-2 text-sm text-white transition-colors hover:bg-[#982f2f] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Confirm Finalize Incomplete
               </button>
@@ -1501,9 +1901,9 @@ function Panel({
   children,
 }: Readonly<{ title: string; subtitle: string; children: ReactNode }>) {
   return (
-    <section className="rounded-2xl border border-black/10 bg-white/90 p-5 shadow-[0_18px_50px_-35px_rgba(42,31,19,0.4)]">
-      <h2 className="font-display text-sm uppercase tracking-[0.22em] text-[#755f46]">{title}</h2>
-      <p className="mt-1 text-xs text-[#6f5a45]">{subtitle}</p>
+    <section className="rounded-2xl border border-[color:var(--stroke)] bg-[color:var(--surface)] p-5 shadow-[var(--shadow-panel)]">
+      <h2 className="font-display text-sm uppercase tracking-[0.22em] text-[color:var(--text-muted)]">{title}</h2>
+      <p className="mt-1 text-xs text-[color:var(--text-faint)]">{subtitle}</p>
       <div className="mt-4">{children}</div>
     </section>
   );
@@ -1511,9 +1911,9 @@ function Panel({
 
 function InfoPill({ title, value }: Readonly<{ title: string; value: string }>) {
   return (
-    <div className="rounded-xl border border-black/10 bg-[#f8f1e6] px-3 py-2">
-      <p className="text-[10px] uppercase tracking-[0.2em] text-[#6f5a45]">{title}</p>
-      <p className="mt-0.5 truncate text-sm font-semibold">{value}</p>
+    <div className="rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface-2)] px-3 py-2">
+      <p className="text-[10px] uppercase tracking-[0.2em] text-[color:var(--text-faint)]">{title}</p>
+      <p className="mt-0.5 truncate text-sm font-semibold text-[color:var(--foreground)]">{value}</p>
     </div>
   );
 }
@@ -1524,13 +1924,15 @@ function ChecklistRow({
   detail,
 }: Readonly<{ label: string; ok: boolean; detail?: string }>) {
   return (
-    <div className="mb-1.5 flex items-center justify-between gap-2 rounded-xl border border-black/10 bg-[#f8f1e6] px-3 py-2 text-xs">
+    <div className="mb-1.5 flex items-center justify-between gap-2 rounded-xl border border-[color:var(--stroke)] bg-[color:var(--surface-2)] px-3 py-2 text-xs">
       <span>{label}</span>
       <div className="flex items-center gap-2 shrink-0">
-        {detail ? <span className="text-[#75644e]">{detail}</span> : null}
+        {detail ? <span className="text-[color:var(--text-faint)]">{detail}</span> : null}
         <span
           className={`rounded-full px-2 py-0.5 font-semibold ${
-            ok ? "bg-[#d4f3df] text-[#245f3b]" : "bg-[#f7d6cc] text-[#8b3727]"
+            ok
+              ? "bg-[color:var(--success-bg)] text-[color:var(--success-text)]"
+              : "bg-[color:var(--danger-bg)] text-[color:var(--danger-text)]"
           }`}
         >
           {ok ? "OK" : "Fail"}

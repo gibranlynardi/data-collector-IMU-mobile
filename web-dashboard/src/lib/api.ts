@@ -235,6 +235,14 @@ export async function fetchVideoMetadata(sessionId: string): Promise<VideoMetada
   return request<VideoMetadataResponse>(`/sessions/${sessionId}/video/metadata`);
 }
 
-export async function anonymizeVideo(sessionId: string): Promise<VideoAnonymizeResponse> {
-  return request<VideoAnonymizeResponse>(`/sessions/${sessionId}/video/anonymize`, { method: "POST" });
+export async function anonymizeVideo(
+  sessionId: string,
+  options?: { useMock?: boolean },
+): Promise<VideoAnonymizeResponse> {
+  const params = new URLSearchParams();
+  if (options?.useMock) {
+    params.set("use_mock", "true");
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return request<VideoAnonymizeResponse>(`/sessions/${sessionId}/video/anonymize${suffix}`, { method: "POST" });
 }
