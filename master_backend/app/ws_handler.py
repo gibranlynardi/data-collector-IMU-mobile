@@ -3,8 +3,10 @@ WebSocket endpoints for telemetry and control channels (CLAUDE.md §8).
 /ws/telemetry — SensorPacket binary stream (device → backend)
 /ws/control   — Command binary channel (bidirectional)
 """
+import asyncio
 import json
 import logging
+import math
 import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -74,7 +76,13 @@ async def telemetry_ws(websocket: WebSocket) -> None:
             dedup.add(device_id, session_manager.session_id, pkt.sequence_number)
             session_manager.increment_packets(device_id)
             session_manager.mark_first_packet(device_id, pkt.timestamp_ms)
-            await io_manager.write_packet(pkt)
+            try:
+                await io_manager.write_packet(pkt)
+            except OSError as exc:
+                logger.error("write_packet failed for %s: %s", device_id[:8], exc)
+                await audit.log("ERROR", "write_packet_failed", {"device_id": device_id, "error": str(exc)})
+                # Do not re-raise — an I/O error must not drop the WebSocket.
+                # The mobile will activate its blackbox buffer on next reconnect.
             # Cache latest sample for /ws/live dashboard chart.
             _latest_samples[device_id] = {
                 "acc": [round(pkt.acc_x, 4), round(pkt.acc_y, 4), round(pkt.acc_z, 4)],
@@ -87,7 +95,12 @@ async def telemetry_ws(websocket: WebSocket) -> None:
     except Exception as exc:
         await audit.log("ERROR", "telemetry_ws_error", {"error": str(exc), "device_id": device_id})
     finally:
-        session_manager.unregister_device(device_id)
+        # Do NOT call unregister_device here. The telemetry channel is a data pipe only;
+        # control_ws and device lifecycle are managed exclusively by control_ws.finally.
+        # Calling unregister_device here wipes control_ws while the control channel is
+        # still alive, causing the dashboard to show 0 devices after recording stops.
+        if device_id:
+            session_manager.note_telemetry_disconnect(device_id)
         await audit.log("INFO", "ws_disconnect", {"channel": "telemetry", "device_id": device_id})
 
 
@@ -141,7 +154,11 @@ async def control_ws(websocket: WebSocket) -> None:
                 logger.debug("Failed to parse Command from %s: %s", device_id[:8], exc)
                 continue
 
-            await _handle_command(cmd, device_id, websocket)
+            try:
+                await _handle_command(cmd, device_id, websocket)
+            except Exception as exc:
+                logger.warning("Command error for %s: %s", device_id[:8], exc)
+                # Log and continue — a single bad command must not close the connection.
 
     except WebSocketDisconnect:
         pass
@@ -364,19 +381,35 @@ async def live_ws(websocket: WebSocket) -> None:
         _live_connections.discard(websocket)
 
 
+def _safe_float(v: object) -> object:
+    """Replace NaN/Inf with None so json.dumps never raises ValueError."""
+    if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+        return None
+    return v
+
+
 async def _live_broadcaster_loop() -> None:
     """Background task started from main.py lifespan."""
     while True:
-        await asyncio.sleep(0.05)  # 20 fps
-        if _latest_samples and _live_connections:
-            msg = json.dumps({"samples": _latest_samples})
-            dead: set[WebSocket] = set()
-            for ws in _live_connections:
-                try:
-                    await ws.send_text(msg)
-                except Exception:
-                    dead.add(ws)
-            _live_connections.difference_update(dead)
-
-
-import asyncio  # noqa: E402 (needed for _live_broadcaster_loop)
+        await asyncio.sleep(0.05)  # 20 fps — CancelledError propagates cleanly on shutdown
+        if not _latest_samples or not _live_connections:
+            continue
+        try:
+            safe: dict = {
+                dev: {
+                    k: [_safe_float(f) for f in v] if isinstance(v, list) else _safe_float(v)
+                    for k, v in data.items()
+                }
+                for dev, data in _latest_samples.items()
+            }
+            msg = json.dumps({"samples": safe})
+        except Exception as exc:
+            logger.warning("live_broadcaster: serialization error, skipping frame: %s", exc)
+            continue
+        dead: set[WebSocket] = set()
+        for ws in _live_connections:
+            try:
+                await ws.send_text(msg)
+            except Exception:
+                dead.add(ws)
+        _live_connections.difference_update(dead)

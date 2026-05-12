@@ -90,6 +90,30 @@ export default function Home() {
     return () => { unsub(); unsubLive(); };
   }, []);
 
+  // ── Auto-reconnect on mount ────────────────────────────────────────────────
+  useEffect(() => {
+    const saved = localStorage.getItem("backendIp");
+    if (!saved) return;
+
+    setBackendIp(saved);
+    wsClient.connect(saved);
+
+    let tries = 0;
+    const poll = setInterval(() => {
+      if (wsClient.isConnected) {
+        clearInterval(poll);
+        setIsWsConnected(true);
+        setView("dashboard");
+        wsClient.getState();
+      } else if (++tries > 25) {
+        clearInterval(poll);
+        // Backend unreachable — stay on connect screen with IP pre-filled.
+      }
+    }, 200);
+
+    return () => clearInterval(poll);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Connect ────────────────────────────────────────────────────────────────
   const handleConnect = () => {
     setConnectError("");
@@ -100,6 +124,7 @@ export default function Home() {
     const poll = setInterval(() => {
       if (wsClient.isConnected) {
         clearInterval(poll);
+        localStorage.setItem("backendIp", backendIp);
         setIsWsConnected(true);
         setView("dashboard");
         wsClient.getState();
@@ -170,6 +195,15 @@ export default function Home() {
           >
             Connect
           </button>
+          {isWsConnected && (
+            <button
+              onClick={() => setView("dashboard")}
+              className="w-full py-2 rounded text-sm text-blue-400 hover:text-blue-300
+                         border border-[#30363d] hover:border-blue-500 transition-colors"
+            >
+              ← Back to Dashboard
+            </button>
+          )}
         </div>
       </div>
     );

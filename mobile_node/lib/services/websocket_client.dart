@@ -84,6 +84,17 @@ class WebSocketClient {
       _telemetry = WebSocketChannel.connect(
         Uri.parse('ws://$serverIp:8000/ws/telemetry'),
       );
+      // Detect server-side drops on the telemetry channel. Without this listener
+      // Flutter silently writes to a dead sink — the dashboard chart freezes
+      // permanently because _latest_samples on the backend stops updating.
+      // Triggering _onControlDisconnect activates the existing reconnect path,
+      // which re-opens both channels and flushes any buffered blackbox data.
+      _telemetry!.stream.listen(
+        null,
+        onDone: () { if (_state == WsState.connected) _onControlDisconnect(); },
+        onError: (_) { if (_state == WsState.connected) _onControlDisconnect(); },
+        cancelOnError: true,
+      );
 
       _setState(WsState.connected);
       _startPingTimer();

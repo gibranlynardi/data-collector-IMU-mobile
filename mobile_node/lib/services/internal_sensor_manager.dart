@@ -31,13 +31,17 @@ class InternalSensorManager {
     _currentFrequency = frequency;
     final intervalMs = (1000 / frequency).round();
 
-    _accSub = accelerometerEventStream().listen((e) {
+    _accSub = accelerometerEventStream(
+      samplingPeriod: SensorInterval.fastestInterval,
+    ).listen((e) {
       _lastAx = e.x;
       _lastAy = e.y;
       _lastAz = e.z;
     });
 
-    _gyroSub = gyroscopeEventStream().listen((e) {
+    _gyroSub = gyroscopeEventStream(
+      samplingPeriod: SensorInterval.fastestInterval,
+    ).listen((e) {
       _lastGx = e.x;
       _lastGy = e.y;
       _lastGz = e.z;

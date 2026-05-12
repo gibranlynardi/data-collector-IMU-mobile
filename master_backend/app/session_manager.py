@@ -13,6 +13,8 @@ from pathlib import Path
 
 from fastapi import WebSocket
 
+from master_backend.proto.commands import Command, CommandType
+
 from .audit_logger import audit
 from .dedup_store import dedup
 from .io_manager import io_manager
@@ -20,7 +22,7 @@ from .integrity_validator import IntegrityValidator
 
 logger = logging.getLogger(__name__)
 
-_DEVICE_OFFLINE_SEC = 3.0
+_DEVICE_OFFLINE_SEC = 8.0   # matches Flutter _pongTimeoutSec in websocket_client.dart
 _COORDINATED_START_LEAD_MS = 500   # ms ahead of now for scheduled_start
 
 
@@ -127,6 +129,21 @@ class SessionManager:
                     "end_ms": None,
                 })
 
+    def note_telemetry_disconnect(self, device_id: str) -> None:
+        """Record a telemetry-channel drop for the integrity report.
+        Does NOT touch control_ws — device lifecycle belongs to the control channel only."""
+        if device_id not in self._devices:
+            return
+        dev = self._devices[device_id]
+        if self.state == SessionState.RECORDING and not (
+            dev.offline_intervals and dev.offline_intervals[-1]["end_ms"] is None
+        ):
+            dev.offline_intervals.append({
+                "start_ms": int(time.time() * 1000),
+                "end_ms": None,
+                "source": "telemetry_disconnect",
+            })
+
     def mark_ping(self, device_id: str) -> None:
         if device_id in self._devices:
             dev = self._devices[device_id]
@@ -216,6 +233,16 @@ class SessionManager:
     async def stop_recording(self, reason: str = "operator_stop") -> dict:
         if self.state != SessionState.RECORDING:
             return {}
+
+        # Notify mobile nodes before closing files so they exit recording state
+        # while their control_ws handles are still live.
+        stop_cmd = Command(
+            type=CommandType.STOP_SESSION,
+            payload=json.dumps({"reason": reason}),
+            issued_at_ms=int(time.time() * 1000),
+        ).to_bytes()
+        await self.broadcast_control(stop_cmd)
+
         await self._transition(SessionState.FINALIZING)
         if self._offline_check_task:
             self._offline_check_task.cancel()
