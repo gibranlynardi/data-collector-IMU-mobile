@@ -21,10 +21,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Flutter (stable)
+      - name: Set up Flutter (pinned)
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.24.5'   # pinned: matches Gradle 8.5 / AGP 8.2.1 / Kotlin 1.9.22 toolchain
           cache: true
 
       - name: Accept Android SDK licenses
