@@ -23,6 +23,7 @@ class WebSocketClient {
   WebSocketChannel? _telemetry;
   WebSocketChannel? _control;
   StreamSubscription? _controlSub;
+  StreamSubscription? _telemetrySub;
   StreamSubscription? _sensorSub;
   Timer? _pingTimer;
   Timer? _resyncTimer;
@@ -64,6 +65,13 @@ class WebSocketClient {
     _serverIp = serverIp;
     _setState(WsState.connecting);
 
+    // Cancel any stale subscriptions from a previous (now-dead) connection so their
+    // onDone/onError cannot fire against the new connection (Defect D).
+    await _controlSub?.cancel();
+    await _telemetrySub?.cancel();
+    _controlSub = null;
+    _telemetrySub = null;
+
     _deviceId = await DeviceIdService().getDeviceId();
     _deviceRole = await DeviceIdService().getDeviceRole();
     await DeviceIdService().saveServerIp(serverIp);
@@ -72,24 +80,28 @@ class WebSocketClient {
       _control = WebSocketChannel.connect(
         Uri.parse('ws://$serverIp:8000/ws/control'),
       );
+      // Block until the control socket is actually open. Throws on failure instead of
+      // optimistically reporting "connected" (Defect B). 6 s tolerates a slow handshake;
+      // a dead network errors out well before that.
+      await _control!.ready.timeout(const Duration(seconds: 6));
+
       _controlSub = _control!.stream.listen(
         (raw) => _handleControlMessage(raw),
         onDone: _onControlDisconnect,
         onError: (_) => _onControlDisconnect(),
       );
 
-      // Send DeviceRegister on control channel.
+      // Send DeviceRegister only after the control socket is confirmed open.
       await _sendDeviceRegister();
 
       _telemetry = WebSocketChannel.connect(
         Uri.parse('ws://$serverIp:8000/ws/telemetry'),
       );
-      // Detect server-side drops on the telemetry channel. Without this listener
-      // Flutter silently writes to a dead sink — the dashboard chart freezes
-      // permanently because _latest_samples on the backend stops updating.
-      // Triggering _onControlDisconnect activates the existing reconnect path,
-      // which re-opens both channels and flushes any buffered blackbox data.
-      _telemetry!.stream.listen(
+      await _telemetry!.ready.timeout(const Duration(seconds: 6));
+
+      // Detect server-side drops on the telemetry channel. Stored so it can be cancelled
+      // on the next reconnect (Defect D).
+      _telemetrySub = _telemetry!.stream.listen(
         null,
         onDone: () { if (_state == WsState.connected) _onControlDisconnect(); },
         onError: (_) { if (_state == WsState.connected) _onControlDisconnect(); },
@@ -97,6 +109,9 @@ class WebSocketClient {
       );
 
       _setState(WsState.connected);
+      // Reset the pong clock so the first ping-timer tick after (re)connect does not
+      // immediately time out on a stale _lastPong (Defect A — the critical fix).
+      _lastPong = DateTime.now();
       _startPingTimer();
       _startClockSync();
       // Start foreground service to keep process alive when screen is off.
@@ -104,7 +119,11 @@ class WebSocketClient {
       await ForegroundServiceHandler().start();
       return true;
     } catch (e) {
-      _setState(WsState.disconnected);
+      // Real failure (network still down, handshake timed out). Go offline and let the
+      // reconnect loop retry — do NOT report success, so the buffer is never flushed/cleared
+      // against a dead socket (Defect B).
+      _setState(WsState.offline);
+      _scheduleReconnect();
       return false;
     }
   }
@@ -245,7 +264,10 @@ class WebSocketClient {
   }
 
   void _onControlDisconnect() {
-    if (_state == WsState.disconnected) return;
+    // Only a live, connected channel can trigger a drop→reconnect. If we are already
+    // disconnected (explicit), offline (reconnect pending), or connecting, ignore the
+    // duplicate signal so reconnect attempts never stack (Defect C).
+    if (_state != WsState.connected) return;
     _setState(WsState.offline);
     _pingTimer?.cancel();
     _resyncTimer?.cancel();
@@ -264,13 +286,18 @@ class WebSocketClient {
 
   Future<void> _flushFallbackBuffer() async {
     if (!FallbackBufferManager().isActive) return;
-    // Send each buffered packet in order, live packets queue in memory meanwhile.
+    bool completed = true;
     await for (final bytes in FallbackBufferManager().flushStream()) {
-      if (_state != WsState.connected) break;
+      if (_state != WsState.connected) { completed = false; break; }
       _telemetry?.sink.add(bytes);
     }
-    await FallbackBufferManager().clearAfterFlush();
-    _packetsBuffered = 0;
+    if (completed && _state == WsState.connected) {
+      await FallbackBufferManager().clearAfterFlush();
+      _packetsBuffered = 0;
+    }
+    // If the socket dropped mid-flush, leave the buffer intact; the next reconnect
+    // re-flushes it. Backend dedup (device_id, session_id, sequence_number) makes the
+    // re-send idempotent, so no duplicate rows are written.
   }
 
   // ── Commands ─────────────────────────────────────────────────────────────
@@ -301,6 +328,7 @@ class WebSocketClient {
 
   void _startPingTimer() {
     _pingTimer?.cancel();
+    _lastPong = DateTime.now();   // fresh grace window each time the timer (re)starts
     _pingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       sendCommand(CommandProto(
         type: CommandType.PING,
