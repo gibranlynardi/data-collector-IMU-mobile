@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 
 import { wsClient, type SessionState, type DeviceInfo, type StateUpdate } from "@/lib/ws_client";
@@ -9,8 +9,11 @@ import PreflightPanel from "@/components/PreflightPanel";
 import LabelingPanel from "@/components/LabelingPanel";
 import IntegrityReport from "@/components/IntegrityReport";
 import DevicePanel from "@/components/DevicePanel";
-// Direct import — dynamic() breaks forwardRef so webcamRef.current would be null.
-import WebcamRecorder, { type WebcamRecorderHandle } from "@/components/WebcamRecorder";
+// Direct import — dynamic() breaks forwardRef so camRef.current would be null.
+import MultiCameraRecorder, {
+  type MultiCameraRecorderHandle,
+  type CameraStatus,
+} from "@/components/MultiCameraRecorder";
 
 // ECharts uses browser APIs — dynamic import keeps SSR safe.
 const RealtimeChart = dynamic(() => import("@/components/RealtimeChart"), { ssr: false });
@@ -45,9 +48,9 @@ export default function Home() {
   const [activeLabel, setActiveLabel] = useState(0);
   const [labelError, setLabelError] = useState("");
 
-  // Webcam
-  const [webcamOk, setWebcamOk] = useState(false);
-  const webcamRef = useRef<WebcamRecorderHandle>(null);
+  // Cameras (1–5, dynamic)
+  const [camStatus, setCamStatus] = useState<CameraStatus>({ ready: 0, total: 0, ok: false });
+  const camRef = useRef<MultiCameraRecorderHandle>(null);
 
   const isRecording = sessionState === "RECORDING";
   // Derive online count directly from devices — single source of truth.
@@ -58,7 +61,7 @@ export default function Home() {
     subject.trim().length > 0 &&
     sessionTag.trim().length > 0 &&
     operator.trim().length > 0 &&
-    webcamOk;
+    camStatus.ok;
 
   // ── WS event subscriptions ─────────────────────────────────────────────────
   useEffect(() => {
@@ -80,7 +83,7 @@ export default function Home() {
         if (su.state === "RECORDING" && su.scheduled_start_ms) {
           const delay = su.scheduled_start_ms - Date.now();
           setTimeout(() => {
-            webcamRef.current?.startRecording(su.session_id || String(Date.now()));
+            camRef.current?.startRecording(su.session_id || String(Date.now()));
           }, Math.max(0, delay));
         }
       }
@@ -151,11 +154,28 @@ export default function Home() {
 
   const handleStop = async () => {
     try {
-      const videoBlob = await webcamRef.current?.stopRecording();
-      if (videoBlob) {
-        // Extension must match the bytes: MP4 where supported, WebM fallback otherwise.
-        const ext = videoBlob.type.includes("mp4") ? "mp4" : "webm";
-        _downloadBlob(videoBlob, `${sessionId}_video_sync.${ext}`);
+      const results = (await camRef.current?.stopRecording()) ?? [];
+      // One download per camera; extension matches each camera's actual container.
+      for (const r of results) {
+        const ext = r.mime.includes("mp4") ? "mp4" : "webm";
+        _downloadBlob(r.blob, `${sessionId}_${r.camId}_video_sync.${ext}`);
+        // Stagger so the browser doesn't drop concurrent downloads (one-time
+        // "Allow multiple downloads" prompt the first time).
+        await new Promise(res => setTimeout(res, 350));
+      }
+      if (results.length > 0) {
+        const manifest = {
+          session_id: sessionId,
+          cameras: results.map(r => ({
+            cam_id: r.camId,
+            device_id: r.deviceId,
+            browser_label: r.label,
+            mime: r.mime,
+            file: `${sessionId}_${r.camId}_video_sync.${r.mime.includes("mp4") ? "mp4" : "webm"}`,
+          })),
+        };
+        const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
+        _downloadBlob(blob, `${sessionId}_cameras.json`);
       }
       await wsClient.stopSession("operator_stop");
     } catch (e) {
@@ -172,8 +192,6 @@ export default function Home() {
       setLabelError(`Label ${id} failed — retried 3×`);
     }
   };
-
-  const handleWebcamReady = useCallback((ok: boolean) => setWebcamOk(ok), []);
 
   // ── Render: connect screen ─────────────────────────────────────────────────
   if (view === "connect") {
@@ -239,7 +257,7 @@ export default function Home() {
             subject={subject}
             sessionTag={sessionTag}
             operator={operator}
-            webcamOk={webcamOk}
+            camStatus={camStatus}
           />
 
           {/* Start / Stop button */}
@@ -300,17 +318,26 @@ export default function Home() {
                   ✕ Dismiss
                 </button>
               </div>
-              <IntegrityReport report={integrityReport as Parameters<typeof IntegrityReport>[0]["report"]} />
+              <IntegrityReport report={integrityReport as unknown as Parameters<typeof IntegrityReport>[0]["report"]} />
             </div>
           )}
         </main>
 
-        {/* Right: webcam */}
-        <aside className="w-72 shrink-0 border-l border-[#30363d] p-4 flex flex-col gap-3">
-          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Webcam</h3>
-          <WebcamRecorder ref={webcamRef} onReady={handleWebcamReady} />
-          {!webcamOk && (
-            <p className="text-xs text-red-400">No camera — required for recording</p>
+        {/* Right: cameras (1–5) */}
+        <aside className="w-72 shrink-0 border-l border-[#30363d] p-4 flex flex-col gap-3 overflow-y-auto">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Cameras</h3>
+            <span className={`text-[11px] font-bold ${camStatus.ok ? "text-green-400" : "text-red-400"}`}>
+              {camStatus.ready}/{camStatus.total}
+            </span>
+          </div>
+          <MultiCameraRecorder ref={camRef} onStatusChange={setCamStatus} disabled={isRecording} />
+          {!camStatus.ok && (
+            <p className="text-xs text-red-400">
+              {camStatus.total === 0
+                ? "Select at least one camera — required for recording"
+                : `${camStatus.total - camStatus.ready} camera(s) not ready`}
+            </p>
           )}
         </aside>
       </div>

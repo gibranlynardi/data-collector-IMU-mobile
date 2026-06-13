@@ -1,5 +1,6 @@
 "use client";
 import type { DeviceInfo } from "@/lib/ws_client";
+import type { CameraStatus } from "@/components/MultiCameraRecorder";
 
 type CheckStatus = "pending" | "pass" | "fail";
 
@@ -11,7 +12,7 @@ function buildChecks(
   subject: string,
   sessionTag: string,
   operator: string,
-  webcamOk: boolean,
+  camStatus: CameraStatus,
 ): Check[] {
   const onlineDevices = devices.filter(d => d.is_online);
   return [
@@ -41,9 +42,9 @@ function buildChecks(
       detail: operator || "Required",
     },
     {
-      label: "Webcam available",
-      status: webcamOk ? "pass" : "fail",
-      detail: webcamOk ? "Ready" : "No camera detected",
+      label: "Cameras ready",
+      status: camStatus.ok ? "pass" : "fail",
+      detail: camStatus.total === 0 ? "None selected" : `${camStatus.ready}/${camStatus.total} ready`,
     },
   ];
 }
@@ -54,13 +55,13 @@ interface Props {
   subject: string;
   sessionTag: string;
   operator: string;
-  webcamOk: boolean;
+  camStatus: CameraStatus;
 }
 
 export default function PreflightPanel(props: Props) {
   const checks = buildChecks(
     props.isWsConnected, props.devices,
-    props.subject, props.sessionTag, props.operator, props.webcamOk,
+    props.subject, props.sessionTag, props.operator, props.camStatus,
   );
   const allPass = checks.every(c => c.status === "pass");
 

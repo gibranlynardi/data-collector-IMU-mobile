@@ -86,7 +86,7 @@ export default function DevicePanel({ devices, quorum, liveSamples, isRecording 
 
       <div className="space-y-2">
         {devices.map(d => {
-          const colorClass = ROLE_COLOR[d.device_role] ?? "bg-gray-900 border-gray-600";
+          const colorClass = ROLE_COLOR[d.role] ?? "bg-gray-900 border-gray-600";
           return (
             <div
               key={d.device_id}
@@ -95,7 +95,7 @@ export default function DevicePanel({ devices, quorum, liveSamples, isRecording 
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center gap-1.5">
                   <span className={`w-2 h-2 rounded-full ${d.is_online ? "bg-green-400" : "bg-red-400"}`} />
-                  <span className="text-xs font-bold text-white">{d.device_role}</span>
+                  <span className="text-xs font-bold text-white">{d.role}</span>
                 </div>
                 <span className="text-xs text-gray-400 font-mono">{d.device_id.slice(0, 8)}</span>
               </div>
