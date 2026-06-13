@@ -55,6 +55,7 @@ class WebSocketClient {
   int get packetsSent => _packetsSent;
   int get packetsBuffered => _packetsBuffered;
   String? get activeSessionId => _activeSessionId;
+  String get deviceRole => _deviceRole;
 
   // ── Connect ──────────────────────────────────────────────────────────────
 
