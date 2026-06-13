@@ -245,10 +245,11 @@ class _StatusBar extends StatelessWidget {
                 Text('Buffered: $buffered',
                     style: const TextStyle(
                         color: Colors.orange, fontSize: 11)),
-              if (isRecording && activeLabel > 0)
+              if (isRecording)
                 Text('Label: $activeLabel',
-                    style: const TextStyle(
-                        color: Colors.greenAccent, fontSize: 11)),
+                    style: TextStyle(
+                        color: activeLabel == 0 ? Colors.white54 : Colors.greenAccent,
+                        fontSize: 11)),
             ],
           ),
         ],

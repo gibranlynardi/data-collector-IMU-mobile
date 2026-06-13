@@ -6,14 +6,14 @@ interface Props {
   disabled: boolean;
 }
 
-// Labels 1-50 per MIGRATION_PLAN.md open decision #3.
-const LABELS = Array.from({ length: 50 }, (_, i) => i + 1);
+// Label 0 = baseline (name "0"). Labels 1–50 per MIGRATION_PLAN.md open decision #3.
+const LABELS = Array.from({ length: 51 }, (_, i) => i);   // [0, 1, ..., 50]
 
 export default function LabelingPanel({ activeLabel, onLabel, disabled }: Props) {
   return (
     <div>
       <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
-        Labels {activeLabel > 0 && <span className="text-blue-400 normal-case">— active: {activeLabel}</span>}
+        Labels <span className="text-blue-400 normal-case">— active: {activeLabel}</span>
       </h3>
       <div className="grid grid-cols-10 gap-1 max-h-36 overflow-y-auto pr-1">
         {LABELS.map(id => (
@@ -25,7 +25,9 @@ export default function LabelingPanel({ activeLabel, onLabel, disabled }: Props)
               rounded py-1 text-xs font-mono font-bold transition-colors
               ${activeLabel === id
                 ? "bg-blue-600 text-white"
-                : "bg-[#161b22] text-gray-400 hover:bg-[#1c2230] hover:text-white"}
+                : id === 0
+                  ? "bg-[#0d1117] text-gray-500 hover:bg-[#1c2230] hover:text-white"
+                  : "bg-[#161b22] text-gray-400 hover:bg-[#1c2230] hover:text-white"}
               disabled:opacity-30 disabled:cursor-not-allowed
             `}
           >
