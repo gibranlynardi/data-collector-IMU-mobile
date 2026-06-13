@@ -152,7 +152,11 @@ export default function Home() {
   const handleStop = async () => {
     try {
       const videoBlob = await webcamRef.current?.stopRecording();
-      if (videoBlob) _downloadBlob(videoBlob, `${sessionId}_video_sync.webm`);
+      if (videoBlob) {
+        // Extension must match the bytes: MP4 where supported, WebM fallback otherwise.
+        const ext = videoBlob.type.includes("mp4") ? "mp4" : "webm";
+        _downloadBlob(videoBlob, `${sessionId}_video_sync.${ext}`);
+      }
       await wsClient.stopSession("operator_stop");
     } catch (e) {
       alert(`Stop failed: ${e}`);

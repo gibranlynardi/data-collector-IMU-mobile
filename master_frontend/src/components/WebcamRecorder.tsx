@@ -13,9 +13,14 @@ interface Props {
 }
 
 const TIMESLICE_MS = 1000;
+// Prefer MP4 (H.264) so the output is .mp4 where the browser supports it (Chrome/Edge
+// ≥130, Safari). Fall back to WebM so recording never fails on a browser without MP4
+// MediaRecorder support. Video-only (getUserMedia audio:false), so no audio codec needed.
 const CODEC_PRIORITY = [
-  "video/webm;codecs=vp9,opus",
-  "video/webm;codecs=vp8,opus",
+  "video/mp4;codecs=avc1.42E01E",   // H.264 baseline
+  "video/mp4",
+  "video/webm;codecs=vp9",
+  "video/webm;codecs=vp8",
   "video/webm",
 ];
 
