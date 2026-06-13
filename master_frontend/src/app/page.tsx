@@ -154,7 +154,10 @@ export default function Home() {
 
   const handleStop = async () => {
     try {
-      const results = (await camRef.current?.stopRecording()) ?? [];
+      const { results, missed } = (await camRef.current?.stopRecording()) ?? { results: [], missed: [] };
+      // Release backend before downloads — a throw/hang in the download loop can no longer
+      // leave the session stuck in RECORDING. [Finding B]
+      await wsClient.stopSession("operator_stop");
       // One download per camera; extension matches each camera's actual container.
       for (const r of results) {
         const ext = r.mime.includes("mp4") ? "mp4" : "webm";
@@ -177,7 +180,8 @@ export default function Home() {
         const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
         _downloadBlob(blob, `${sessionId}_cameras.json`);
       }
-      await wsClient.stopSession("operator_stop");
+      // [Finding C] Surface cameras that produced no footage so the operator knows an angle is missing.
+      if (missed.length > 0) alert(`Warning: ${missed.join(", ")} captured no footage and was not saved.`);
     } catch (e) {
       alert(`Stop failed: ${e}`);
     }

@@ -1,13 +1,14 @@
 "use client";
 import { useCallback, useEffect, useRef, useState, useImperativeHandle, forwardRef } from "react";
-import { saveChunk, loadChunks, clearChunks } from "@/lib/video_backup";
+import { saveChunk, loadChunks, clearAllChunks } from "@/lib/video_backup";
 
 // ── Public contract (consumed by page.tsx) ──────────────────────────────────
 export interface CameraResult { camId: string; deviceId: string; label: string; blob: Blob; mime: string; }
 export interface CameraStatus { ready: number; total: number; ok: boolean; }
+export interface StopOutcome { results: CameraResult[]; missed: string[]; }
 export interface MultiCameraRecorderHandle {
   startRecording: (sessionId: string) => Promise<void>;
-  stopRecording: () => Promise<CameraResult[]>;
+  stopRecording: () => Promise<StopOutcome>;
 }
 interface Props {
   onStatusChange: (status: CameraStatus) => void;
@@ -108,7 +109,8 @@ function CameraTile({ camId, deviceId, label, register, onStatus }: TileProps) {
     const chunks = await loadChunks(sessionRef.current, camId);
     if (chunks.length === 0) return null;
     const blob = new Blob(chunks, { type: chunks[0].type || "video/webm" });
-    await clearChunks(sessionRef.current, camId);
+    // Do NOT clear here — chunks stay in IndexedDB so footage survives a blocked/aborted
+    // download. They are GC'd at the start of the NEXT session (see startRecording). [Finding A]
     return { camId, deviceId, label, blob, mime: blob.type };
   };
   const startRef = useRef(startFn); startRef.current = startFn;
@@ -213,11 +215,18 @@ const MultiCameraRecorder = forwardRef<MultiCameraRecorderHandle, Props>(
     useImperativeHandle(ref, () => ({
       // Fan out to all live tiles in the SAME callback → synchronized start.
       async startRecording(sessionId: string) {
+        // Deferred-clear point: free the PREVIOUS session's backups now that a new session is
+        // starting. Must finish before any tile starts writing chunks. [Finding A]
+        await clearAllChunks();
         await Promise.all(Array.from(tilesRef.current.values()).map(t => t.start(sessionId)));
       },
-      async stopRecording(): Promise<CameraResult[]> {
-        const out = await Promise.all(Array.from(tilesRef.current.values()).map(t => t.stop()));
-        return out.filter((r): r is CameraResult => r !== null);
+      async stopRecording(): Promise<StopOutcome> {
+        const entries = Array.from(tilesRef.current.entries());
+        const raw = await Promise.all(entries.map(([, t]) => t.stop()));
+        const results: CameraResult[] = [];
+        const missed: string[] = [];
+        raw.forEach((r, i) => { if (r !== null) results.push(r); else missed.push(entries[i][0]); });
+        return { results, missed };
       },
     }), []);
 

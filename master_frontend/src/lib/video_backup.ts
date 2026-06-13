@@ -80,6 +80,18 @@ export async function clearChunks(sessionId: string, camId?: string): Promise<vo
   });
 }
 
+// Wipe the ENTIRE chunk store regardless of session/cam. Called at the start of a new session
+// so the PREVIOUS session's chunks persist (recoverable) until then — see audit Finding A.
+export async function clearAllChunks(): Promise<void> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 // Distinct camIds that still have chunks on disk for a session (crash-recovery aid; §6).
 export async function listPendingCameras(sessionId: string): Promise<string[]> {
   const db = await openDb();
