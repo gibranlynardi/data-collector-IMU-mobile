@@ -237,10 +237,10 @@ export default function Home() {
 
   // ── Render: dashboard ──────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col min-h-screen">
+    <div className="flex flex-col h-screen overflow-hidden">
       <StatusBanner state={sessionState} sessionId={sessionId} devices={devices} isWsConnected={isWsConnected} />
 
-      <div className="flex flex-1 gap-0 overflow-hidden">
+      <div className="flex flex-1 gap-0 overflow-hidden min-h-0">
         {/* Left panel */}
         <aside className="w-64 shrink-0 border-r border-[#30363d] flex flex-col gap-4 p-4 overflow-y-auto">
           <SessionForm
@@ -293,9 +293,9 @@ export default function Home() {
         </aside>
 
         {/* Center: chart */}
-        <main className="flex-1 flex flex-col gap-4 p-4 overflow-hidden">
+        <main className="flex-1 flex flex-col gap-4 p-4 overflow-hidden min-h-0">
           <div className="flex-1 min-h-0">
-            <RealtimeChart samples={liveSamples} />
+            <RealtimeChart samples={liveSamples} devices={devices} />
           </div>
 
           {/* Label panel */}
@@ -322,7 +322,9 @@ export default function Home() {
                   ✕ Dismiss
                 </button>
               </div>
-              <IntegrityReport report={integrityReport as unknown as Parameters<typeof IntegrityReport>[0]["report"]} />
+              <div className="max-h-44 overflow-y-auto">
+                <IntegrityReport report={integrityReport as unknown as Parameters<typeof IntegrityReport>[0]["report"]} />
+              </div>
             </div>
           )}
         </main>

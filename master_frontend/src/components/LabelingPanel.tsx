@@ -15,7 +15,7 @@ export default function LabelingPanel({ activeLabel, onLabel, disabled }: Props)
       <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
         Labels <span className="text-blue-400 normal-case">— active: {activeLabel}</span>
       </h3>
-      <div className="grid grid-cols-10 gap-1 max-h-36 overflow-y-auto pr-1">
+      <div className="grid grid-cols-10 gap-1">
         {LABELS.map(id => (
           <button
             key={id}
