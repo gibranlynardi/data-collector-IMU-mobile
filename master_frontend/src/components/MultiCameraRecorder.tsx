@@ -123,15 +123,15 @@ function CameraTile({ camId, deviceId, label, register, onStatus }: TileProps) {
   }, [camId, register]);
 
   return (
-    <div className="relative rounded overflow-hidden bg-black border border-[#30363d]">
+    <div className="relative rounded-lg overflow-hidden bg-black border border-white/10">
       {flash && <div className="absolute inset-0 bg-white z-10 pointer-events-none" />}
       <video ref={videoRef} className="w-full aspect-video object-cover" playsInline muted />
-      <div className="absolute top-1 left-1 flex items-center gap-1 bg-black/60 rounded px-1.5 py-0.5 text-[10px] text-gray-200">
+      <div className="absolute top-1 left-1 flex items-center gap-1 bg-black/40 backdrop-blur-md border border-white/10 rounded-md px-1.5 py-0.5 text-[10px] text-gray-200">
         {isRecording && <span className="animate-pulse text-red-400">●</span>}
-        <span className="font-mono font-bold">{camId}</span>
+        <span className="font-bold">{camId}</span>
         <span className="opacity-60 max-w-[90px] truncate">{label}</span>
       </div>
-      <div className="absolute bottom-1 right-1 bg-black/60 rounded px-1 text-[10px] font-mono text-gray-400">
+      <div className="absolute bottom-1 right-1 bg-black/40 backdrop-blur-md rounded-md px-1 text-[10px] tabular-nums text-gray-400">
         {detail}
       </div>
     </div>
@@ -247,17 +247,17 @@ const MultiCameraRecorder = forwardRef<MultiCameraRecorderHandle, Props>(
               <label
                 key={dev.deviceId || i}
                 className={`flex items-center gap-2 text-[11px] px-2 py-1 rounded border
-                  ${sel ? "border-blue-600 bg-blue-950/40 text-white" : "border-[#30363d] text-gray-400"}
-                  ${lock ? "opacity-40 cursor-not-allowed" : "cursor-pointer hover:border-blue-500"}`}
+                  ${sel ? "border-accent/60 bg-accent/10 text-white" : "border-white/10 text-gray-400"}
+                  ${lock ? "opacity-40 cursor-not-allowed" : "cursor-pointer hover:border-accent/50"}`}
               >
                 <input
                   type="checkbox"
-                  className="accent-blue-600"
+                  className="accent-cyan-400"
                   checked={!!sel}
                   disabled={lock}
                   onChange={() => toggleCamera(dev)}
                 />
-                <span className="font-mono w-9">{sel ? sel.camId : "—"}</span>
+                <span className="w-9 tabular-nums">{sel ? sel.camId : "—"}</span>
                 <span className="flex-1 truncate">{dev.label || `Camera ${i + 1}`}</span>
               </label>
             );

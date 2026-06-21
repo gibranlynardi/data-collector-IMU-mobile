@@ -17,14 +17,14 @@ interface Report {
 }
 
 const STATUS_STYLE: Record<string, string> = {
-  PASS: "text-green-400 bg-green-950 border-green-800",
-  FAIL: "text-red-400 bg-red-950 border-red-800",
-  PARTIAL: "text-yellow-400 bg-yellow-950 border-yellow-800",
+  PASS:    "text-green-400 bg-green-500/10 border-green-500/30",
+  FAIL:    "text-red-400 bg-red-500/10 border-red-500/30",
+  PARTIAL: "text-yellow-400 bg-yellow-500/10 border-yellow-500/30",
 };
 
 export default function IntegrityReport({ report }: { report: Report }) {
   return (
-    <div className={`rounded border px-4 py-3 text-sm ${STATUS_STYLE[report.status] ?? STATUS_STYLE.PARTIAL}`}>
+    <div className={`rounded-lg border px-4 py-3 text-sm ${STATUS_STYLE[report.status] ?? STATUS_STYLE.PARTIAL}`}>
       <div className="flex items-center justify-between mb-2">
         <span className="font-bold text-base">
           Integrity: {report.status}
@@ -38,7 +38,7 @@ export default function IntegrityReport({ report }: { report: Report }) {
 
       <div className="space-y-2">
         {report.devices.map(d => (
-          <div key={d.device_id} className="rounded bg-black/20 p-2 text-xs font-mono space-y-0.5">
+          <div key={d.device_id} className="rounded-md bg-white/5 p-2 text-xs tabular-nums space-y-0.5">
             <div className="flex justify-between">
               <span className="text-gray-300">{d.device_id.slice(0, 8)}…</span>
               <span className={d.status === "PASS" ? "text-green-400" : "text-red-400"}>{d.status}</span>

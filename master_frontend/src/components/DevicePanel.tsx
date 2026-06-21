@@ -12,14 +12,14 @@ interface Props {
 }
 
 const ROLE_COLOR: Record<string, string> = {
-  chest:       "bg-blue-900 border-blue-600",
-  waist:       "bg-purple-900 border-purple-600",
-  thigh_left:  "bg-green-900 border-green-600",
-  thigh_right: "bg-teal-900 border-teal-600",
-  ankle_left:  "bg-yellow-900 border-yellow-600",
-  ankle_right: "bg-orange-900 border-orange-600",
-  wrist_left:  "bg-pink-900 border-pink-600",
-  wrist_right: "bg-rose-900 border-rose-600",
+  chest:       "bg-blue-500/15 border-blue-500/40",
+  waist:       "bg-purple-500/15 border-purple-500/40",
+  thigh_left:  "bg-green-500/15 border-green-500/40",
+  thigh_right: "bg-teal-500/15 border-teal-500/40",
+  ankle_left:  "bg-yellow-500/15 border-yellow-500/40",
+  ankle_right: "bg-orange-500/15 border-orange-500/40",
+  wrist_left:  "bg-pink-500/15 border-pink-500/40",
+  wrist_right: "bg-rose-500/15 border-rose-500/40",
 };
 
 function MiniSparkline({ deviceId, samples }: { deviceId: string; samples: Record<string, Sample> }) {
@@ -45,7 +45,7 @@ function MiniSparkline({ deviceId, samples }: { deviceId: string; samples: Recor
     const min = Math.min(...data);
     const max = Math.max(...data) || 1;
 
-    ctx.strokeStyle = "#58a6ff";
+    ctx.strokeStyle = "#22d3ee";
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     data.forEach((v, i) => {
@@ -71,10 +71,10 @@ export default function DevicePanel({ devices, quorum, liveSamples, isRecording 
         <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Devices</h3>
         <span className={`text-xs font-bold px-2 py-0.5 rounded ${
           onlineCount === 0
-            ? "bg-red-950 text-red-400"
+            ? "bg-red-500/15 text-red-400"
             : allOnline
-            ? "bg-green-950 text-green-400"
-            : "bg-yellow-950 text-yellow-400"
+            ? "bg-green-500/15 text-green-400"
+            : "bg-yellow-500/15 text-yellow-400"
         }`}>
           {onlineCount}/{devices.length} online
         </span>
@@ -86,18 +86,18 @@ export default function DevicePanel({ devices, quorum, liveSamples, isRecording 
 
       <div className="space-y-2">
         {devices.map(d => {
-          const colorClass = ROLE_COLOR[d.role] ?? "bg-gray-900 border-gray-600";
+          const colorClass = ROLE_COLOR[d.role] ?? "bg-gray-500/15 border-gray-500/40";
           return (
             <div
               key={d.device_id}
-              className={`rounded border px-2 py-2 ${colorClass} ${!d.is_online ? "opacity-40" : ""}`}
+              className={`rounded-lg border px-2 py-2 ${colorClass} ${!d.is_online ? "opacity-40" : ""}`}
             >
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center gap-1.5">
                   <span className={`w-2 h-2 rounded-full ${d.is_online ? "bg-green-400" : "bg-red-400"}`} />
                   <span className="text-xs font-bold text-white">{d.role}</span>
                 </div>
-                <span className="text-xs text-gray-400 font-mono">{d.device_id.slice(0, 8)}</span>
+                <span className="text-xs text-gray-400 tabular-nums">{d.device_id.slice(0, 8)}</span>
               </div>
 
               {/* Mini sparkline — acc vector magnitude */}

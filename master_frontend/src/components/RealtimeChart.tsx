@@ -95,18 +95,18 @@ function NodeChartCard({
 
   return (
     <div
-      className={`rounded bg-[#161b22] border border-[#30363d] border-l-2 flex flex-col overflow-hidden ${isOnline ? "" : "opacity-50"}`}
+      className={`glass-panel border-l-2 flex flex-col overflow-hidden ${isOnline ? "" : "opacity-50"}`}
       style={{ height: 200, borderLeftColor: roleHex(role) }}
     >
       {/* Header: node identity + X/Y/Z legend */}
-      <div className="flex items-center justify-between px-2 py-1 border-b border-[#30363d] shrink-0">
+      <div className="flex items-center justify-between px-2 py-1 border-b border-white/10 shrink-0">
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="w-2 h-2 rounded-full shrink-0" style={{ background: roleHex(role) }} />
           <span className="text-xs font-bold text-white truncate">{role}</span>
-          <span className="text-[10px] text-gray-500 font-mono truncate">{deviceId.slice(0, 8)}</span>
+          <span className="text-[10px] text-gray-500 tabular-nums truncate">{deviceId.slice(0, 8)}</span>
           {!isOnline && <span className="text-[10px] text-red-400">offline</span>}
         </div>
-        <div className="flex items-center gap-2 text-[10px] font-mono">
+        <div className="flex items-center gap-2 text-[10px]">
           {AXES.map((a, i) => (
             <span key={a} style={{ color: COLORS[i] }}>{a}</span>
           ))}
@@ -129,7 +129,7 @@ function NodeChartCard({
 export default function RealtimeChart({ samples, devices, maxPoints = 200 }: Props) {
   if (devices.length === 0) {
     return (
-      <div className="w-full h-full rounded bg-[#161b22] border border-[#30363d] flex items-center justify-center">
+      <div className="w-full h-full glass-panel rounded-xl flex items-center justify-center">
         <p className="text-xs text-gray-600 italic">No nodes streaming — connect a node to see live signals</p>
       </div>
     );

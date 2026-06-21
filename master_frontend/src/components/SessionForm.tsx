@@ -19,8 +19,7 @@ export default function SessionForm({ subject, setSubject, sessionTag, setSessio
         <div key={label}>
           <label className="text-xs text-gray-500">{label}</label>
           <input
-            className="w-full mt-0.5 px-2 py-1.5 rounded bg-[#161b22] border border-[#30363d] text-sm text-white
-                       focus:outline-none focus:border-blue-500 disabled:opacity-40"
+            className="glass-input w-full mt-0.5 px-2 py-1.5 text-sm text-white disabled:opacity-40"
             value={value}
             onChange={e => set(e.target.value)}
             placeholder={placeholder}

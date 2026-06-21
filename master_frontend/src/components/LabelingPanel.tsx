@@ -13,7 +13,7 @@ export default function LabelingPanel({ activeLabel, onLabel, disabled }: Props)
   return (
     <div>
       <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
-        Labels <span className="text-blue-400 normal-case">— active: {activeLabel}</span>
+        Labels <span className="text-accent normal-case">— active: {activeLabel}</span>
       </h3>
       <div className="grid grid-cols-10 gap-1">
         {LABELS.map(id => (
@@ -22,12 +22,12 @@ export default function LabelingPanel({ activeLabel, onLabel, disabled }: Props)
             onClick={() => onLabel(id)}
             disabled={disabled}
             className={`
-              rounded py-1 text-xs font-mono font-bold transition-colors
+              rounded py-1 text-xs font-bold tabular-nums transition-all
               ${activeLabel === id
-                ? "bg-blue-600 text-white"
+                ? "bg-accent text-[#04141a] shadow-[0_0_12px_rgba(34,211,238,0.45)]"
                 : id === 0
-                  ? "bg-[#0d1117] text-gray-500 hover:bg-[#1c2230] hover:text-white"
-                  : "bg-[#161b22] text-gray-400 hover:bg-[#1c2230] hover:text-white"}
+                  ? "glass-card text-gray-500 hover:border-accent/50 hover:text-white"
+                  : "glass-card text-gray-400 hover:border-accent/50 hover:text-white"}
               disabled:opacity-30 disabled:cursor-not-allowed
             `}
           >
