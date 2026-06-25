@@ -38,52 +38,85 @@ interface TileProps {
   camId: string;
   deviceId: string;
   label: string;
+  deviceEpoch: number; // bumped by manager on devicechange → lets a dead tile re-acquire
   register: (camId: string, handle: TileHandle | null) => void;
   onStatus: (camId: string, live: boolean) => void;
 }
 
-function CameraTile({ camId, deviceId, label, register, onStatus }: TileProps) {
+function CameraTile({ camId, deviceId, label, deviceEpoch, register, onStatus }: TileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const mediaRef = useRef<MediaRecorder | null>(null);
   const sessionRef = useRef<string>("");
   const chunkIndexRef = useRef(0);
+  const liveRef = useRef(false); // true while this slot has a working stream (gates re-acquire)
   const [isRecording, setIsRecording] = useState(false);
   const [flash, setFlash] = useState(false);
   const [detail, setDetail] = useState("opening…");
 
-  // Open this camera's dedicated stream. Keyed on deviceId/camId — both fixed per slot,
-  // and onStatus is stable, so this runs exactly once per tile (no reopen churn).
+  // Acquire (or re-acquire) this slot's dedicated stream. Callers only invoke it when the
+  // slot is NOT already live, so a healthy camera is never torn down → no reopen churn.
+  const acquire = useCallback(async (shouldAbort: () => boolean): Promise<void> => {
+    try {
+      setDetail("opening…");
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      if (shouldAbort()) { stream.getTracks().forEach(t => t.stop()); return; }
+      streamRef.current = stream;
+      liveRef.current = true;
+      const track = stream.getVideoTracks()[0];
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.muted = true;
+        await videoRef.current.play().catch(() => {});
+      }
+      // A physical unplug ends the track. Mark the slot dead (fail loud) so the next
+      // devicechange (reconnect) re-acquires it instead of leaving a black preview.
+      track?.addEventListener("ended", () => {
+        liveRef.current = false;
+        streamRef.current = null;
+        setDetail("disconnected — retrying on reconnect");
+        onStatus(camId, false);
+      });
+      const s = track?.getSettings();
+      setDetail(s?.width ? `${s.width}×${s.height}` : "live");
+      onStatus(camId, true);
+    } catch (e) {
+      // Fail loud: surface the failed camera so preflight blocks (CLAUDE.md "Fail Loud").
+      if (!shouldAbort()) {
+        liveRef.current = false;
+        streamRef.current = null;
+        setDetail("open failed");
+        onStatus(camId, false);
+        console.error(`cam ${camId} open failed`, e);
+      }
+    }
+  }, [deviceId, camId, onStatus]);
+
+  // Initial open (deviceId/camId/acquire are all stable, so this runs once per slot) +
+  // teardown on unmount.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
-        });
-        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.muted = true;
-          await videoRef.current.play().catch(() => {});
-        }
-        const s = stream.getVideoTracks()[0]?.getSettings();
-        setDetail(s?.width ? `${s.width}×${s.height}` : "live");
-        onStatus(camId, true);
-      } catch (e) {
-        // Fail loud: surface the failed camera so preflight blocks (CLAUDE.md "Fail Loud").
-        if (!cancelled) { setDetail("open failed"); onStatus(camId, false); console.error(`cam ${camId} open failed`, e); }
-      }
-    })();
+    acquire(() => cancelled);
     return () => {
       cancelled = true;
       streamRef.current?.getTracks().forEach(t => t.stop());
       streamRef.current = null;
+      liveRef.current = false;
       onStatus(camId, false);
     };
-  }, [deviceId, camId, onStatus]);
+  }, [acquire, camId, onStatus]);
+
+  // Reconnect recovery: when the device set changes (hot-plug), re-acquire ONLY if this
+  // slot's stream has died. A live tile returns immediately → no churn on healthy cameras.
+  useEffect(() => {
+    if (deviceEpoch === 0 || liveRef.current) return;
+    let cancelled = false;
+    acquire(() => cancelled);
+    return () => { cancelled = true; };
+  }, [deviceEpoch, acquire]);
 
   // start/stop read the latest stream/recorder via refs; the registered handle is stable.
   const startFn = async (sessionId: string) => {
@@ -144,6 +177,7 @@ const MultiCameraRecorder = forwardRef<MultiCameraRecorderHandle, Props>(
     const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
     const [active, setActive] = useState<ActiveCam[]>([]);
     const [permError, setPermError] = useState("");
+    const [deviceEpoch, setDeviceEpoch] = useState(0); // bumped on devicechange → tiles re-acquire
     const tilesRef = useRef<Map<string, TileHandle>>(new Map());
     const statusRef = useRef<Map<string, boolean>>(new Map());
     const activeRef = useRef<ActiveCam[]>([]);
@@ -168,6 +202,14 @@ const MultiCameraRecorder = forwardRef<MultiCameraRecorderHandle, Props>(
     // Mirror active → ref and re-emit status whenever the selection changes.
     useEffect(() => { activeRef.current = active; emitStatus(); }, [active, emitStatus]);
 
+    // Re-enumerate the available video inputs. Labels are populated only after a prior
+    // permission grant (the mount-time probe below), so this is safe to call repeatedly.
+    const refreshDevices = useCallback(async (): Promise<MediaDeviceInfo[]> => {
+      const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+      setCameras(devs);
+      return devs;
+    }, []);
+
     // Enumerate cameras after unlocking labels with a one-shot probe permission.
     useEffect(() => {
       (async () => {
@@ -180,8 +222,7 @@ const MultiCameraRecorder = forwardRef<MultiCameraRecorderHandle, Props>(
           console.error("camera permission probe failed", e);
           return;
         }
-        const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
-        setCameras(devs);
+        const devs = await refreshDevices();
         // Auto-select first camera → parity with previous single-camera default.
         if (devs.length > 0) {
           setActive([{ camId: "cam1", deviceId: devs[0].deviceId, label: devs[0].label || "camera 1" }]);
@@ -191,6 +232,19 @@ const MultiCameraRecorder = forwardRef<MultiCameraRecorderHandle, Props>(
       })();
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // Hot-plug: the browser fires `devicechange` when a camera is attached/removed. Re-enumerate
+    // so newly connected webcams appear in the selector (fixes "won't auto-detect" and "can't
+    // see a 2nd external cam"), and bump an epoch so a tile whose stream died re-acquires when
+    // its device returns (fixes "reconnect → black"). The selector stays locked while RECORDING.
+    useEffect(() => {
+      const onDeviceChange = () => {
+        refreshDevices().catch(e => console.error("device re-enumeration failed", e));
+        setDeviceEpoch(n => n + 1);
+      };
+      navigator.mediaDevices.addEventListener("devicechange", onDeviceChange);
+      return () => navigator.mediaDevices.removeEventListener("devicechange", onDeviceChange);
+    }, [refreshDevices]);
 
     const toggleCamera = (dev: MediaDeviceInfo) => {
       if (disabled) return; // cannot change selection during RECORDING
@@ -275,6 +329,7 @@ const MultiCameraRecorder = forwardRef<MultiCameraRecorderHandle, Props>(
               camId={c.camId}
               deviceId={c.deviceId}
               label={c.label}
+              deviceEpoch={deviceEpoch}
               register={registerTile}
               onStatus={handleTileStatus}
             />
