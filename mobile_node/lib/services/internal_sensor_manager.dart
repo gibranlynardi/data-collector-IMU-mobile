@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import '../models/sensor_packet.dart';
 
@@ -37,6 +38,11 @@ class InternalSensorManager {
       _lastAx = e.x;
       _lastAy = e.y;
       _lastAz = e.z;
+    }, onError: (Object e) {
+      // Don't fail silently into flat-zero readings: a platform error here
+      // (e.g. missing HIGH_SAMPLING_RATE_SENSORS on Android 12+) means no
+      // accelerometer events ever arrive.
+      debugPrint('InternalSensorManager: accelerometer stream error: $e');
     });
 
     _gyroSub = gyroscopeEventStream(
@@ -45,6 +51,8 @@ class InternalSensorManager {
       _lastGx = e.x;
       _lastGy = e.y;
       _lastGz = e.z;
+    }, onError: (Object e) {
+      debugPrint('InternalSensorManager: gyroscope stream error: $e');
     });
 
     _ticker = Timer.periodic(Duration(milliseconds: intervalMs), (_) {

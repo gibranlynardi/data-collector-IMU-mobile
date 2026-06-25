@@ -164,15 +164,28 @@ class _PreflightScreenState extends State<PreflightScreen> {
     final meanAcc = accSamples.reduce((a, b) => a + b) / accSamples.length;
     final meanGyro = gyroSamples.reduce((a, b) => a + b) / gyroSamples.length;
 
+    // A working accelerometer always senses gravity (~1 g) at rest, so a
+    // magnitude near zero means no sensor data is actually reaching the app
+    // (e.g. a sensor/permission failure). That same failure silently zeroes the
+    // gyroscope too, and 0 °/s would otherwise sail through the gyro check
+    // below. Use the gravity-bearing accelerometer as the "is data flowing?"
+    // oracle and fail BOTH checks on no-data, instead of letting gyro pass.
+    const double noDataThreshold = 0.1; // g — far below any real resting value
+    final bool noSensorData = meanAcc < noDataThreshold;
+
     // Acc magnitude at rest ≈ 1 g (gravity). Threshold 0.5–1.5 g.
-    if (meanAcc >= 0.5 && meanAcc <= 1.5) {
+    if (noSensorData) {
+      _setFail(4, 'No accelerometer data (avm=${meanAcc.toStringAsFixed(2)}g) — check sensor/permission');
+    } else if (meanAcc >= 0.5 && meanAcc <= 1.5) {
       _setPass(4, 'avm=${meanAcc.toStringAsFixed(2)}g (${accSamples.length} samples)');
     } else {
       _setFail(4, 'avm=${meanAcc.toStringAsFixed(2)}g — hold still or check sensor');
     }
 
     _setRunning(5, hint: 'Hold phone still…');
-    if (meanGyro < 5.0) {
+    if (noSensorData) {
+      _setFail(5, 'No gyroscope data — check sensor/permission');
+    } else if (meanGyro < 5.0) {
       _setPass(5, 'gyro=${meanGyro.toStringAsFixed(2)}°/s (${gyroSamples.length} samples)');
     } else {
       _setFail(5, 'gyro=${meanGyro.toStringAsFixed(2)}°/s — hold still or check sensor');
