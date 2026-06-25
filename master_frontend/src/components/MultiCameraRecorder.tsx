@@ -181,6 +181,9 @@ const MultiCameraRecorder = forwardRef<MultiCameraRecorderHandle, Props>(
     const tilesRef = useRef<Map<string, TileHandle>>(new Map());
     const statusRef = useRef<Map<string, boolean>>(new Map());
     const activeRef = useRef<ActiveCam[]>([]);
+    const disabledRef = useRef(disabled);
+    disabledRef.current = disabled;             // RECORDING lock, readable in stable handlers
+    const grantedRef = useRef(false);           // true once camera permission is granted
 
     // Compute aggregate readiness from refs (so the callbacks below stay stable).
     const emitStatus = useCallback(() => {
@@ -210,41 +213,85 @@ const MultiCameraRecorder = forwardRef<MultiCameraRecorderHandle, Props>(
       return devs;
     }, []);
 
-    // Enumerate cameras after unlocking labels with a one-shot probe permission.
-    useEffect(() => {
-      (async () => {
+    // Probe for permission (which unlocks device labels), then enumerate. Safe to call
+    // repeatedly: once granted, getUserMedia resolves instantly with no prompt. Distinguishes
+    // "no camera attached yet" (NOT an error — recovered on the next devicechange) from a real
+    // denial, so starting the app with zero cameras and plugging one in later works WITHOUT a
+    // restart/reload.
+    const ensureReady = useCallback(async () => {
+      if (!grantedRef.current) {
         try {
           const probe = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-          probe.getTracks().forEach(t => t.stop()); // release immediately before opening exact devices
+          probe.getTracks().forEach(t => t.stop());   // release before opening exact devices
+          grantedRef.current = true;
+          setPermError("");
         } catch (e) {
-          setPermError("Camera permission denied");
+          const name = (e as DOMException)?.name;
+          if (name === "NotFoundError" || name === "DevicesNotFoundError" || name === "OverconstrainedError") {
+            // No camera present yet — not a permission problem. devicechange will retry.
+            setPermError("");
+            await refreshDevices();
+            onStatusChange({ ready: 0, total: 0, ok: false });
+            return;
+          }
+          setPermError("Camera access blocked — enable it, then click Retry");
           onStatusChange({ ready: 0, total: 0, ok: false });
           console.error("camera permission probe failed", e);
           return;
         }
-        const devs = await refreshDevices();
-        // Auto-select first camera → parity with previous single-camera default.
-        if (devs.length > 0) {
-          setActive([{ camId: "cam1", deviceId: devs[0].deviceId, label: devs[0].label || "camera 1" }]);
-        } else {
-          onStatusChange({ ready: 0, total: 0, ok: false });
-        }
-      })();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+      }
+      const devs = await refreshDevices();
+      // Auto-select the first camera ONLY if nothing is selected yet (parity with old default,
+      // and recovers a zero-camera startup once a camera appears).
+      setActive(prev => {
+        if (prev.length > 0 || devs.length === 0) return prev;
+        return [{ camId: "cam1", deviceId: devs[0].deviceId, label: devs[0].label || "camera 1" }];
+      });
+    }, [refreshDevices, onStatusChange]);
+
+    // Mount: attempt to become ready once.
+    useEffect(() => { ensureReady(); }, [ensureReady]);
 
     // Hot-plug: the browser fires `devicechange` when a camera is attached/removed. Re-enumerate
     // so newly connected webcams appear in the selector (fixes "won't auto-detect" and "can't
     // see a 2nd external cam"), and bump an epoch so a tile whose stream died re-acquires when
     // its device returns (fixes "reconnect → black"). The selector stays locked while RECORDING.
     useEffect(() => {
-      const onDeviceChange = () => {
-        refreshDevices().catch(e => console.error("device re-enumeration failed", e));
-        setDeviceEpoch(n => n + 1);
+      const onDeviceChange = async () => {
+        try {
+          if (!grantedRef.current) {
+            // Permission/labels still missing — a newly attached camera may now allow a
+            // successful probe. Recovers a zero-camera or previously-denied startup.
+            await ensureReady();
+          } else {
+            const devs = await refreshDevices();
+            if (!disabledRef.current) {
+              // NOT recording: drop any selected camera that physically went away so its tile
+              // disappears ("disconnected → gone"). While RECORDING we keep the locked slot
+              // (it shows "disconnected" and re-acquires on replug via deviceEpoch), so a
+              // dropped angle is still reported on stop.
+              const present = new Set(devs.map(d => d.deviceId));
+              setActive(prev => {
+                const kept = prev.filter(a => present.has(a.deviceId));
+                if (kept.length === prev.length) return prev;
+                prev.forEach(a => {
+                  if (!present.has(a.deviceId)) {
+                    statusRef.current.delete(a.camId);
+                    tilesRef.current.delete(a.camId);
+                  }
+                });
+                return kept;
+              });
+            }
+          }
+        } catch (e) {
+          console.error("device re-enumeration failed", e);
+        }
+        setDeviceEpoch(n => n + 1);   // let live tiles whose stream died re-acquire on replug
       };
       navigator.mediaDevices.addEventListener("devicechange", onDeviceChange);
       return () => navigator.mediaDevices.removeEventListener("devicechange", onDeviceChange);
-    }, [refreshDevices]);
+    }, [refreshDevices, ensureReady]);
 
     const toggleCamera = (dev: MediaDeviceInfo) => {
       if (disabled) return; // cannot change selection during RECORDING
@@ -289,7 +336,14 @@ const MultiCameraRecorder = forwardRef<MultiCameraRecorderHandle, Props>(
         {/* Selector */}
         <div className="text-[11px]">
           {permError
-            ? <span className="text-red-400">{permError}</span>
+            ? (
+              <span className="text-red-400">
+                {permError}{" "}
+                <button onClick={() => ensureReady()} className="underline text-cyan-400 hover:text-cyan-300">
+                  Retry
+                </button>
+              </span>
+            )
             : <span className="text-gray-400">{active.length}/{MAX_CAMERAS} selected · {cameras.length} detected</span>}
         </div>
         <div className="space-y-1">
