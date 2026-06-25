@@ -1,6 +1,11 @@
 """
 IMU Telemetry Backend — FastAPI entry point.
-Run: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+Run from the REPOSITORY ROOT (parent of master_backend/), not from inside
+master_backend/ — the code uses absolute `master_backend.*` imports and
+pyproject.toml declares the package root one level up:
+
+    uvicorn master_backend.app.main:app --host 0.0.0.0 --port 8000 --reload
 """
 import logging
 import os
