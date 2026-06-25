@@ -369,5 +369,33 @@ class SessionManager:
             if changed:
                 await broadcast_to_frontends(_state_snapshot())
 
+    # ── Idle reaper ──────────────────────────────────────────────────────────
+
+    async def run_idle_reaper(self) -> None:
+        """Permanent background loop. While the session is IDLE, drop any device whose
+        control channel is gone (clean disconnect) or that stopped pinging (silent
+        network death), so stale/offline cards clear from the dashboard WITHOUT a
+        backend restart. Never prunes during RECORDING/FINALIZING/VALIDATING — those
+        states need the full device set for offline-interval tracking and the
+        integrity report. Mutually exclusive with _monitor_offline (gated on state),
+        so the RECORDING path is untouched."""
+        from .ws_handler import broadcast_to_frontends, _state_snapshot, drop_latest_sample
+        while True:
+            await asyncio.sleep(1)
+            if self.state != SessionState.IDLE:
+                continue
+            dead = [
+                device_id
+                for device_id, dev in self._devices.items()
+                if dev.control_ws is None or not dev.is_alive
+            ]
+            if not dead:
+                continue
+            for device_id in dead:
+                self._devices.pop(device_id, None)
+                drop_latest_sample(device_id)
+                await audit.log("INFO", "device_pruned_idle", {"device_id": device_id})
+            await broadcast_to_frontends(_state_snapshot())
+
 
 session_manager = SessionManager()

@@ -39,6 +39,7 @@ async def lifespan(app: FastAPI):
     await _start_mdns()
     _check_interrupted_sessions()
     asyncio.create_task(_live_broadcaster_loop())
+    asyncio.create_task(session_manager.run_idle_reaper())
     logger.info("IMU Telemetry Backend ready — listening on %s:%s",
                 os.getenv("BIND_HOST", "0.0.0.0"), os.getenv("PORT", "8000"))
     yield

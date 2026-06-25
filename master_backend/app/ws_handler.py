@@ -30,6 +30,12 @@ _frontend_connections: set[WebSocket] = set()
 _latest_samples: dict[str, dict] = {}
 
 
+def drop_latest_sample(device_id: str) -> None:
+    """Remove a pruned device's cached sample so /ws/live stops re-broadcasting it
+    and the cache cannot grow unbounded across device churn."""
+    _latest_samples.pop(device_id, None)
+
+
 async def broadcast_to_frontends(msg: dict) -> None:
     """Push a JSON state update to all connected operator dashboards."""
     dead: set[WebSocket] = set()
