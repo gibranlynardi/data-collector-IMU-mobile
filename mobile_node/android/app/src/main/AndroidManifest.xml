@@ -7,9 +7,10 @@
     <!-- Sensors -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-    <!-- Required on Android 12+ (API 31+) to sample motion sensors faster than
-         200 Hz. Without it, high-rate (fastestInterval) accelerometer/gyroscope
-         registration can deliver NO events on many devices → flat 0 readings. -->
+    <!-- Kept as harmless defense-in-depth. We now register IMU streams at the
+         output rate (~100 Hz, <= 200 Hz), which is BELOW the Android 12+
+         high-rate gate, so this permission is not strictly required. It only
+         matters if a future build requests > 200 Hz. -->
     <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS"/>
 
     <!-- Foreground service + wake locks (CLAUDE.md §9.3) -->
