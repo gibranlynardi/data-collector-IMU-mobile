@@ -48,6 +48,7 @@ class WsClient {
   private liveWs: WebSocket | null = null;
   private listeners: Listener[] = [];
   private liveListeners: LiveListener[] = [];
+  private connListeners: ((connected: boolean) => void)[] = [];
   private pendingAcks = new Map<string, {
     msg: string; attempts: number;
     resolve: (v: AckMsg) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>;
@@ -81,6 +82,15 @@ class WsClient {
     return () => { this.liveListeners = this.liveListeners.filter(l => l !== cb); };
   }
 
+  onConnectionChange(cb: (connected: boolean) => void): () => void {
+    this.connListeners.push(cb);
+    return () => { this.connListeners = this.connListeners.filter(l => l !== cb); };
+  }
+
+  private _emitConn(connected: boolean): void {
+    this.connListeners.forEach(l => l(connected));
+  }
+
   async startSession(subject: string, tag: string, operator: string): Promise<AckMsg> {
     return this._sendWithAck("START_SESSION", { subject_name: subject, session_tag: tag, operator });
   }
@@ -101,6 +111,10 @@ class WsClient {
 
   private _connectControl(ip: string): void {
     const ws = new WebSocket(`ws://${ip}:8000/ws/frontend`);
+    ws.onopen = () => {
+      this._emitConn(true);
+      this.getState();   // force a fresh snapshot after (re)connect / backend restart
+    };
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data as string) as FrontendMsg;
@@ -108,7 +122,7 @@ class WsClient {
         this.listeners.forEach(l => l(msg));
       } catch { /* ignore */ }
     };
-    ws.onclose = () => setTimeout(() => this._connectControl(ip), 3000);
+    ws.onclose = () => { this._emitConn(false); setTimeout(() => this._connectControl(ip), 3000); };
     ws.onerror = () => ws.close();
     this.controlWs = ws;
   }

@@ -53,6 +53,9 @@ export default function Home() {
   const [camStatus, setCamStatus] = useState<CameraStatus>({ ready: 0, total: 0, ok: false });
   const camRef = useRef<MultiCameraRecorderHandle>(null);
 
+  // Guards a second STOP click from re-entering stop_recording ("Not recording" throw).
+  const [isStopping, setIsStopping] = useState(false);
+
   const isRecording = sessionState === "RECORDING";
   // Derive online count directly from devices — single source of truth.
   const onlineCount = devices.filter(d => d.is_online).length;
@@ -74,9 +77,10 @@ export default function Home() {
         };
         setSessionState(su.state);
         setSessionId(su.session_id ?? "");
-        if (su.devices && (su.devices.length > 0 || su.state !== "IDLE")) {
-          setDevices(su.devices);
-        }
+        // STATE_UPDATE always carries the authoritative, complete device list. Apply it
+        // verbatim — including an empty list — so pruned/offline devices and a backend
+        // restart clear stale cards instead of lingering until a manual reload.
+        if (su.devices) setDevices(su.devices);
         if (su.quorum) setQuorum(su.quorum);
         if (su.integrity_report) setIntegrityReport(su.integrity_report);
 
@@ -90,8 +94,9 @@ export default function Home() {
       }
     });
     const unsubLive = wsClient.onLive((samples) => setLiveSamples({ ...samples }));
+    const unsubConn = wsClient.onConnectionChange(setIsWsConnected);
 
-    return () => { unsub(); unsubLive(); };
+    return () => { unsub(); unsubLive(); unsubConn(); };
   }, []);
 
   // ── Auto-reconnect on mount ────────────────────────────────────────────────
@@ -154,6 +159,8 @@ export default function Home() {
   };
 
   const handleStop = async () => {
+    if (isStopping) return;          // guard double-click → no spurious "Not recording" alert
+    setIsStopping(true);
     try {
       const { results, missed } = (await camRef.current?.stopRecording()) ?? { results: [], missed: [] };
       // Release backend before downloads — a throw/hang in the download loop can no longer
@@ -185,6 +192,8 @@ export default function Home() {
       if (missed.length > 0) alert(`Warning: ${missed.join(", ")} captured no footage and was not saved.`);
     } catch (e) {
       alert(`Stop failed: ${e}`);
+    } finally {
+      setIsStopping(false);
     }
   };
 
@@ -280,16 +289,20 @@ export default function Home() {
             ) : (
               <button
                 onClick={handleStop}
-                className="btn-danger w-full py-2 font-bold text-sm"
+                disabled={isStopping}
+                className="btn-danger w-full py-2 font-bold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                ■ STOP SESSION
+                {isStopping ? "■ STOPPING…" : "■ STOP SESSION"}
               </button>
             )}
 
-            {/* Disconnect */}
+            {/* Disconnect — locked during RECORDING so the camera MediaRecorders are never
+                torn down mid-capture (which would silently drop video chunks). */}
             <button
               onClick={() => { wsClient.disconnect(); setView("connect"); setIsWsConnected(false); }}
-              className="text-xs text-gray-600 hover:text-gray-400 underline text-center"
+              disabled={isRecording}
+              title={isRecording ? "Stop the session before disconnecting" : undefined}
+              className="text-xs text-gray-600 hover:text-gray-400 underline text-center disabled:opacity-30 disabled:cursor-not-allowed disabled:no-underline"
             >
               Disconnect
             </button>
