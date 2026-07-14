@@ -1,6 +1,11 @@
 """
 IMU Telemetry Backend — FastAPI entry point.
-Run: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+Run from the REPOSITORY ROOT (parent of master_backend/), not from inside
+master_backend/ — the code uses absolute `master_backend.*` imports and
+pyproject.toml declares the package root one level up:
+
+    uvicorn master_backend.app.main:app --host 0.0.0.0 --port 8000 --reload
 """
 import logging
 import os
@@ -34,6 +39,7 @@ async def lifespan(app: FastAPI):
     await _start_mdns()
     _check_interrupted_sessions()
     asyncio.create_task(_live_broadcaster_loop())
+    asyncio.create_task(session_manager.run_idle_reaper())
     logger.info("IMU Telemetry Backend ready — listening on %s:%s",
                 os.getenv("BIND_HOST", "0.0.0.0"), os.getenv("PORT", "8000"))
     yield

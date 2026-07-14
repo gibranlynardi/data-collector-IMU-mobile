@@ -22,6 +22,8 @@ _CSV_HEADER = (
     "gyro_x_degs,gyro_y_degs,gyro_z_degs,"
     "label_id,label_name,sequence_number,device_id\n"
 )
+_DEFAULT_LABEL_ID = 0
+_DEFAULT_LABEL_NAME = "0"
 
 
 class DeviceWriter:
@@ -73,8 +75,8 @@ class IoManager:
     def __init__(self) -> None:
         self._writers: dict[str, DeviceWriter] = {}
         self._rescue_writers: dict[str, DeviceWriter] = {}
-        self._active_label_id: int = 0
-        self._active_label_name: str = ""
+        self._active_label_id: int = _DEFAULT_LABEL_ID
+        self._active_label_name: str = _DEFAULT_LABEL_NAME
         self._session_id: str = ""
         self._ssd_path: Path = Path(os.getenv("SSD_PATH", "./data"))
         self._rescue_path: Path = Path(os.getenv("RESCUE_PATH", "./data_rescue"))
@@ -143,8 +145,8 @@ class IoManager:
             results[device_id] = await writer.close()
         self._writers.clear()
         self._rescue_writers.clear()
-        self._active_label_id = 0
-        self._active_label_name = ""
+        self._active_label_id = _DEFAULT_LABEL_ID
+        self._active_label_name = _DEFAULT_LABEL_NAME
         return results
 
 

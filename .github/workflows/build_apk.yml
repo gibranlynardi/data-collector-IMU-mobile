@@ -2,9 +2,9 @@ name: Build Flutter APK
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, experiment/**]
   pull_request:
-    branches: [main, master]
+    branches: [main, master, experiment/**]
   workflow_dispatch:  # allow manual trigger from GitHub UI
 
 jobs:

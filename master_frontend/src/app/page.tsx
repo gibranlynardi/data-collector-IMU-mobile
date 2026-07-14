@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 
 import { wsClient, type SessionState, type DeviceInfo, type StateUpdate } from "@/lib/ws_client";
@@ -9,8 +9,12 @@ import PreflightPanel from "@/components/PreflightPanel";
 import LabelingPanel from "@/components/LabelingPanel";
 import IntegrityReport from "@/components/IntegrityReport";
 import DevicePanel from "@/components/DevicePanel";
-// Direct import — dynamic() breaks forwardRef so webcamRef.current would be null.
-import WebcamRecorder, { type WebcamRecorderHandle } from "@/components/WebcamRecorder";
+// Direct import — dynamic() breaks forwardRef so camRef.current would be null.
+import MultiCameraRecorder, {
+  type MultiCameraRecorderHandle,
+  type CameraStatus,
+} from "@/components/MultiCameraRecorder";
+import AmbientBackdrop from "@/components/AmbientBackdrop";
 
 // ECharts uses browser APIs — dynamic import keeps SSR safe.
 const RealtimeChart = dynamic(() => import("@/components/RealtimeChart"), { ssr: false });
@@ -45,9 +49,12 @@ export default function Home() {
   const [activeLabel, setActiveLabel] = useState(0);
   const [labelError, setLabelError] = useState("");
 
-  // Webcam
-  const [webcamOk, setWebcamOk] = useState(false);
-  const webcamRef = useRef<WebcamRecorderHandle>(null);
+  // Cameras (1–5, dynamic)
+  const [camStatus, setCamStatus] = useState<CameraStatus>({ ready: 0, total: 0, ok: false });
+  const camRef = useRef<MultiCameraRecorderHandle>(null);
+
+  // Guards a second STOP click from re-entering stop_recording ("Not recording" throw).
+  const [isStopping, setIsStopping] = useState(false);
 
   const isRecording = sessionState === "RECORDING";
   // Derive online count directly from devices — single source of truth.
@@ -58,7 +65,7 @@ export default function Home() {
     subject.trim().length > 0 &&
     sessionTag.trim().length > 0 &&
     operator.trim().length > 0 &&
-    webcamOk;
+    camStatus.ok;
 
   // ── WS event subscriptions ─────────────────────────────────────────────────
   useEffect(() => {
@@ -70,9 +77,10 @@ export default function Home() {
         };
         setSessionState(su.state);
         setSessionId(su.session_id ?? "");
-        if (su.devices && (su.devices.length > 0 || su.state !== "IDLE")) {
-          setDevices(su.devices);
-        }
+        // STATE_UPDATE always carries the authoritative, complete device list. Apply it
+        // verbatim — including an empty list — so pruned/offline devices and a backend
+        // restart clear stale cards instead of lingering until a manual reload.
+        if (su.devices) setDevices(su.devices);
         if (su.quorum) setQuorum(su.quorum);
         if (su.integrity_report) setIntegrityReport(su.integrity_report);
 
@@ -80,14 +88,15 @@ export default function Home() {
         if (su.state === "RECORDING" && su.scheduled_start_ms) {
           const delay = su.scheduled_start_ms - Date.now();
           setTimeout(() => {
-            webcamRef.current?.startRecording(su.session_id || String(Date.now()));
+            camRef.current?.startRecording(su.session_id || String(Date.now()));
           }, Math.max(0, delay));
         }
       }
     });
     const unsubLive = wsClient.onLive((samples) => setLiveSamples({ ...samples }));
+    const unsubConn = wsClient.onConnectionChange(setIsWsConnected);
 
-    return () => { unsub(); unsubLive(); };
+    return () => { unsub(); unsubLive(); unsubConn(); };
   }, []);
 
   // ── Auto-reconnect on mount ────────────────────────────────────────────────
@@ -150,12 +159,41 @@ export default function Home() {
   };
 
   const handleStop = async () => {
+    if (isStopping) return;          // guard double-click → no spurious "Not recording" alert
+    setIsStopping(true);
     try {
-      const videoBlob = await webcamRef.current?.stopRecording();
-      if (videoBlob) _downloadBlob(videoBlob, `${sessionId}_video_sync.webm`);
+      const { results, missed } = (await camRef.current?.stopRecording()) ?? { results: [], missed: [] };
+      // Release backend before downloads — a throw/hang in the download loop can no longer
+      // leave the session stuck in RECORDING. [Finding B]
       await wsClient.stopSession("operator_stop");
+      // One download per camera; extension matches each camera's actual container.
+      for (const r of results) {
+        const ext = r.mime.includes("mp4") ? "mp4" : "webm";
+        _downloadBlob(r.blob, `${sessionId}_${r.camId}_video_sync.${ext}`);
+        // Stagger so the browser doesn't drop concurrent downloads (one-time
+        // "Allow multiple downloads" prompt the first time).
+        await new Promise(res => setTimeout(res, 350));
+      }
+      if (results.length > 0) {
+        const manifest = {
+          session_id: sessionId,
+          cameras: results.map(r => ({
+            cam_id: r.camId,
+            device_id: r.deviceId,
+            browser_label: r.label,
+            mime: r.mime,
+            file: `${sessionId}_${r.camId}_video_sync.${r.mime.includes("mp4") ? "mp4" : "webm"}`,
+          })),
+        };
+        const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
+        _downloadBlob(blob, `${sessionId}_cameras.json`);
+      }
+      // [Finding C] Surface cameras that produced no footage so the operator knows an angle is missing.
+      if (missed.length > 0) alert(`Warning: ${missed.join(", ")} captured no footage and was not saved.`);
     } catch (e) {
       alert(`Stop failed: ${e}`);
+    } finally {
+      setIsStopping(false);
     }
   };
 
@@ -169,148 +207,164 @@ export default function Home() {
     }
   };
 
-  const handleWebcamReady = useCallback((ok: boolean) => setWebcamOk(ok), []);
-
   // ── Render: connect screen ─────────────────────────────────────────────────
   if (view === "connect") {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="w-full max-w-sm space-y-4 p-8 rounded-xl bg-[#161b22] border border-[#30363d]">
-          <h1 className="text-xl font-bold text-center">IMU Telemetry</h1>
-          <p className="text-xs text-gray-500 text-center">Operator Dashboard</p>
-          <div>
-            <label className="text-xs text-gray-400">Backend IP</label>
-            <input
-              className="w-full mt-1 px-3 py-2 rounded bg-[#0d1117] border border-[#30363d] text-sm
-                         focus:outline-none focus:border-blue-500"
-              value={backendIp}
-              onChange={e => setBackendIp(e.target.value)}
-              placeholder="192.168.1.100"
-            />
-          </div>
-          {connectError && <p className="text-xs text-red-400">{connectError}</p>}
-          <button
-            onClick={handleConnect}
-            className="w-full py-2 rounded bg-blue-700 hover:bg-blue-600 font-bold text-sm transition-colors"
-          >
-            Connect
-          </button>
-          {isWsConnected && (
+      <>
+        <AmbientBackdrop state="IDLE" />
+        <div className="relative z-10 min-h-screen flex items-center justify-center">
+          <div className="w-full max-w-sm space-y-4 p-8 glass-panel">
+            <h1 className="text-xl font-bold text-center">IMU Telemetry</h1>
+            <p className="text-xs text-gray-500 text-center">Operator Dashboard</p>
+            <div>
+              <label className="text-xs text-gray-400">Backend IP</label>
+              <input
+                className="glass-input w-full mt-1 px-3 py-2 text-sm"
+                value={backendIp}
+                onChange={e => setBackendIp(e.target.value)}
+                placeholder="192.168.1.100"
+              />
+            </div>
+            {connectError && <p className="text-xs text-red-400">{connectError}</p>}
             <button
-              onClick={() => setView("dashboard")}
-              className="w-full py-2 rounded text-sm text-blue-400 hover:text-blue-300
-                         border border-[#30363d] hover:border-blue-500 transition-colors"
+              onClick={handleConnect}
+              className="btn-primary w-full py-2 font-bold text-sm"
             >
-              ← Back to Dashboard
+              Connect
             </button>
-          )}
+            {isWsConnected && (
+              <button
+                onClick={() => setView("dashboard")}
+                className="btn-glass w-full py-2 text-sm text-gray-300"
+              >
+                ← Back to Dashboard
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   // ── Render: dashboard ──────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col min-h-screen">
-      <StatusBanner state={sessionState} sessionId={sessionId} devices={devices} isWsConnected={isWsConnected} />
+    <>
+      <AmbientBackdrop state={sessionState} />
+      <div className="relative z-10 flex flex-col h-screen overflow-hidden">
+        <StatusBanner state={sessionState} sessionId={sessionId} devices={devices} isWsConnected={isWsConnected} />
 
-      <div className="flex flex-1 gap-0 overflow-hidden">
-        {/* Left panel */}
-        <aside className="w-64 shrink-0 border-r border-[#30363d] flex flex-col gap-4 p-4 overflow-y-auto">
-          <SessionForm
-            subject={subject} setSubject={setSubject}
-            sessionTag={sessionTag} setSessionTag={setSessionTag}
-            operator={operator} setOperator={setOperator}
-            disabled={isRecording}
-          />
-          <DevicePanel
-            devices={devices}
-            quorum={quorum}
-            liveSamples={liveSamples}
-            isRecording={isRecording}
-          />
-          <PreflightPanel
-            isWsConnected={isWsConnected}
-            devices={devices}
-            subject={subject}
-            sessionTag={sessionTag}
-            operator={operator}
-            webcamOk={webcamOk}
-          />
-
-          {/* Start / Stop button */}
-          {!isRecording ? (
-            <button
-              onClick={handleStart}
-              disabled={!prefightAllPass}
-              className="w-full py-2 rounded font-bold text-sm bg-green-800 hover:bg-green-700
-                         disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            >
-              ▶ START SESSION
-            </button>
-          ) : (
-            <button
-              onClick={handleStop}
-              className="w-full py-2 rounded font-bold text-sm bg-red-800 hover:bg-red-700 transition-colors"
-            >
-              ■ STOP SESSION
-            </button>
-          )}
-
-          {/* Disconnect */}
-          <button
-            onClick={() => { wsClient.disconnect(); setView("connect"); setIsWsConnected(false); }}
-            className="text-xs text-gray-600 hover:text-gray-400 underline text-center"
-          >
-            Disconnect
-          </button>
-        </aside>
-
-        {/* Center: chart */}
-        <main className="flex-1 flex flex-col gap-4 p-4 overflow-hidden">
-          <div className="flex-1 min-h-0">
-            <RealtimeChart samples={liveSamples} />
-          </div>
-
-          {/* Label panel */}
-          <div className="shrink-0">
-            {labelError && <p className="text-xs text-red-400 mb-1">{labelError}</p>}
-            <LabelingPanel
-              activeLabel={activeLabel}
-              onLabel={handleLabel}
-              disabled={!isRecording}
+        <div className="flex flex-1 gap-0 overflow-hidden min-h-0">
+          {/* Left panel */}
+          <aside className="glass-rail w-64 shrink-0 border-r border-white/10 flex flex-col gap-4 p-4 overflow-y-auto">
+            <SessionForm
+              subject={subject} setSubject={setSubject}
+              sessionTag={sessionTag} setSessionTag={setSessionTag}
+              operator={operator} setOperator={setOperator}
+              disabled={isRecording}
             />
-          </div>
+            <DevicePanel
+              devices={devices}
+              quorum={quorum}
+              liveSamples={liveSamples}
+              isRecording={isRecording}
+            />
+            <PreflightPanel
+              isWsConnected={isWsConnected}
+              devices={devices}
+              subject={subject}
+              sessionTag={sessionTag}
+              operator={operator}
+              camStatus={camStatus}
+            />
 
-          {/* Integrity report */}
-          {integrityReport && (
-            <div className="shrink-0">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-gray-400 font-bold uppercase tracking-wider">
-                  Last Session Report
-                </span>
-                <button
-                  onClick={() => setIntegrityReport(null)}
-                  className="text-xs text-gray-600 hover:text-gray-300 px-2 py-0.5 rounded border border-[#30363d] hover:border-gray-500 transition-colors"
-                >
-                  ✕ Dismiss
-                </button>
-              </div>
-              <IntegrityReport report={integrityReport as Parameters<typeof IntegrityReport>[0]["report"]} />
+            {/* Start / Stop button */}
+            {!isRecording ? (
+              <button
+                onClick={handleStart}
+                disabled={!prefightAllPass}
+                className="btn-success w-full py-2 font-bold text-sm disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                ▶ START SESSION
+              </button>
+            ) : (
+              <button
+                onClick={handleStop}
+                disabled={isStopping}
+                className="btn-danger w-full py-2 font-bold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isStopping ? "■ STOPPING…" : "■ STOP SESSION"}
+              </button>
+            )}
+
+            {/* Disconnect — locked during RECORDING so the camera MediaRecorders are never
+                torn down mid-capture (which would silently drop video chunks). */}
+            <button
+              onClick={() => { wsClient.disconnect(); setView("connect"); setIsWsConnected(false); }}
+              disabled={isRecording}
+              title={isRecording ? "Stop the session before disconnecting" : undefined}
+              className="text-xs text-gray-600 hover:text-gray-400 underline text-center disabled:opacity-30 disabled:cursor-not-allowed disabled:no-underline"
+            >
+              Disconnect
+            </button>
+          </aside>
+
+          {/* Center: chart */}
+          <main className="flex-1 flex flex-col gap-4 p-4 overflow-hidden min-h-0">
+            <div className="flex-1 min-h-0">
+              <RealtimeChart samples={liveSamples} devices={devices} />
             </div>
-          )}
-        </main>
 
-        {/* Right: webcam */}
-        <aside className="w-72 shrink-0 border-l border-[#30363d] p-4 flex flex-col gap-3">
-          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Webcam</h3>
-          <WebcamRecorder ref={webcamRef} onReady={handleWebcamReady} />
-          {!webcamOk && (
-            <p className="text-xs text-red-400">No camera — required for recording</p>
-          )}
-        </aside>
+            {/* Label panel */}
+            <div className="shrink-0 glass-panel p-3">
+              {labelError && <p className="text-xs text-red-400 mb-1">{labelError}</p>}
+              <LabelingPanel
+                activeLabel={activeLabel}
+                onLabel={handleLabel}
+                disabled={!isRecording}
+              />
+            </div>
+
+            {/* Integrity report */}
+            {integrityReport && (
+              <div className="shrink-0 glass-panel p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-gray-400 font-bold uppercase tracking-wider">
+                    Last Session Report
+                  </span>
+                  <button
+                    onClick={() => setIntegrityReport(null)}
+                    className="btn-glass text-xs text-gray-400 px-2 py-0.5"
+                  >
+                    ✕ Dismiss
+                  </button>
+                </div>
+                <div className="max-h-44 overflow-y-auto">
+                  <IntegrityReport report={integrityReport as unknown as Parameters<typeof IntegrityReport>[0]["report"]} />
+                </div>
+              </div>
+            )}
+          </main>
+
+          {/* Right: cameras (1–5) */}
+          <aside className="glass-rail w-72 shrink-0 border-l border-white/10 p-4 flex flex-col gap-3 overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Cameras</h3>
+              <span className={`text-[11px] font-bold ${camStatus.ok ? "text-green-400" : "text-red-400"}`}>
+                {camStatus.ready}/{camStatus.total}
+              </span>
+            </div>
+            <MultiCameraRecorder ref={camRef} onStatusChange={setCamStatus} disabled={isRecording} />
+            {!camStatus.ok && (
+              <p className="text-xs text-red-400">
+                {camStatus.total === 0
+                  ? "Select at least one camera — required for recording"
+                  : `${camStatus.total - camStatus.ready} camera(s) not ready`}
+              </p>
+            )}
+          </aside>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 

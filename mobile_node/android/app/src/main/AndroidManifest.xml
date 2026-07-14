@@ -10,6 +10,11 @@
     <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <!-- Kept as harmless defense-in-depth. We now register IMU streams at the
+         output rate (~100 Hz, <= 200 Hz), which is BELOW the Android 12+
+         high-rate gate, so this permission is not strictly required. It only
+         matters if a future build requests > 200 Hz. -->
+    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS"/>
 
     <!-- Foreground service + wake locks (CLAUDE.md §9.3) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>

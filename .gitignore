@@ -256,6 +256,7 @@ CLAUDE.md
 MIGRATION_PLAN.md
 FIX_PLAN.md
 HANDOFF.md
+trivia.md
 
 # Recorded research data (never commit — stays on SSD only)
 data/

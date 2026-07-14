@@ -136,46 +136,61 @@ class _PreflightScreenState extends State<PreflightScreen> {
   }
 
   Future<void> _checkSensorSanity() async {
-    _setRunning(4, hint: 'Hold phone still…');
-    InternalSensorManager().start(frequency: 100);
+    _setRunning(4, hint: 'Hold phone still… (a quick small twist is fine)');
+    final mgr = InternalSensorManager();
+    mgr.start(frequency: 100);
 
-    // Collect every sample emitted during the 3-second window (~300 samples at
-    // 100 Hz). Using the mean over all samples means a single motion spike does
-    // not fail the check — only sustained movement or a broken sensor will.
+    // Snapshot raw event counters so we can tell, PER SENSOR and independently,
+    // whether real hardware events actually arrived during the window. A dead
+    // or ungated-high-rate sensor delivers no events; its counter stays flat,
+    // while the 100 Hz ticker keeps republishing zeros (which is exactly how a
+    // dead gyro used to sail through as green).
+    final int accCount0 = mgr.accEventCount;
+    final int gyroCount0 = mgr.gyroEventCount;
+
     final List<double> accSamples = [];
     final List<double> gyroSamples = [];
+    double maxGyro = 0;
 
-    final sub = InternalSensorManager().dataStream.listen((pkt) {
+    final sub = mgr.dataStream.listen((pkt) {
       final avm = sqrt(pkt.accX * pkt.accX + pkt.accY * pkt.accY + pkt.accZ * pkt.accZ);
       final gvm = sqrt(pkt.gyroX * pkt.gyroX + pkt.gyroY * pkt.gyroY + pkt.gyroZ * pkt.gyroZ);
       accSamples.add(avm);
       gyroSamples.add(gvm);
+      if (gvm > maxGyro) maxGyro = gvm;
     });
 
     await Future.delayed(const Duration(seconds: 3));
     await sub.cancel();
 
-    if (accSamples.isEmpty || gyroSamples.isEmpty) {
-      _setFail(4, 'No sensor data received — check permissions');
-      _setFail(5, 'No sensor data received — check permissions');
-      return;
+    final int accEvents = mgr.accEventCount - accCount0;
+    final int gyroEvents = mgr.gyroEventCount - gyroCount0;
+
+    // ── Accelerometer ──────────────────────────────────────────────────────
+    if (accEvents == 0 || accSamples.isEmpty) {
+      _setFail(4, 'No accelerometer data (0 events) — check sensor/permission');
+    } else {
+      final meanAcc = accSamples.reduce((a, b) => a + b) / accSamples.length;
+      // At rest the accelerometer senses gravity ≈ 1 g. Accept 0.5–1.5 g.
+      if (meanAcc >= 0.5 && meanAcc <= 1.5) {
+        _setPass(4, 'avm=${meanAcc.toStringAsFixed(2)}g ($accEvents events)');
+      } else {
+        _setFail(4, 'avm=${meanAcc.toStringAsFixed(2)}g — hold still or check sensor');
+      }
     }
 
-    final meanAcc = accSamples.reduce((a, b) => a + b) / accSamples.length;
-    final meanGyro = gyroSamples.reduce((a, b) => a + b) / gyroSamples.length;
-
-    // Acc magnitude at rest ≈ 1 g (gravity). Threshold 0.5–1.5 g.
-    if (meanAcc >= 0.5 && meanAcc <= 1.5) {
-      _setPass(4, 'avm=${meanAcc.toStringAsFixed(2)}g (${accSamples.length} samples)');
+    // ── Gyroscope (judged INDEPENDENTLY of the accelerometer) ──────────────
+    _setRunning(5, hint: 'Hold phone still… (a quick small twist is fine)');
+    if (gyroEvents == 0 || gyroSamples.isEmpty) {
+      // A genuinely dead gyro delivers no events → fail honestly. It can no
+      // longer pass green just because a flat 0.00 °/s is "< 5".
+      _setFail(5, 'No gyroscope data (0 events) — check sensor/permission');
     } else {
-      _setFail(4, 'avm=${meanAcc.toStringAsFixed(2)}g — hold still or check sensor');
-    }
-
-    _setRunning(5, hint: 'Hold phone still…');
-    if (meanGyro < 5.0) {
-      _setPass(5, 'gyro=${meanGyro.toStringAsFixed(2)}°/s (${gyroSamples.length} samples)');
-    } else {
-      _setFail(5, 'gyro=${meanGyro.toStringAsFixed(2)}°/s — hold still or check sensor');
+      final meanGyro = gyroSamples.reduce((a, b) => a + b) / gyroSamples.length;
+      // Liveness is proven by events arriving. Show mean + peak so a quick
+      // wrist-twist visibly spikes the peak, confirming the sensor responds.
+      _setPass(5,
+          'gyro≈${meanGyro.toStringAsFixed(2)} peak ${maxGyro.toStringAsFixed(1)}°/s ($gyroEvents events)');
     }
   }
 

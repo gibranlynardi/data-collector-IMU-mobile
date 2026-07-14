@@ -24,6 +24,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _packetsBuffered = 0;
   String? _sessionId;
   int _activeLabel = 0;
+  String _deviceRole = WebSocketClient().deviceRole;
 
   @override
   void initState() {
@@ -79,7 +80,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       backgroundColor: const Color(0xFF1A1A2E),
       appBar: AppBar(
         backgroundColor: _isRecording ? Colors.red.shade900 : const Color(0xFF16213E),
-        title: const Text('IMU Node', style: TextStyle(color: Colors.white)),
+        title: Text(
+          'IMU Node · ${WebSocketClient().deviceRole.toUpperCase()}',
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
         actions: [
           _WsStatusDot(_wsState),
           const SizedBox(width: 12),
@@ -93,6 +97,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       body: Column(
         children: [
           _StatusBar(
+            role: _deviceRole,
             isRecording: _isRecording,
             sessionId: _sessionId,
             sent: _packetsSent,
@@ -198,6 +203,7 @@ class _WsStatusDot extends StatelessWidget {
 }
 
 class _StatusBar extends StatelessWidget {
+  final String role;
   final bool isRecording;
   final String? sessionId;
   final int sent;
@@ -205,6 +211,7 @@ class _StatusBar extends StatelessWidget {
   final int activeLabel;
 
   const _StatusBar({
+    required this.role,
     required this.isRecording,
     required this.sessionId,
     required this.sent,
@@ -220,6 +227,22 @@ class _StatusBar extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.deepPurpleAccent.withOpacity(0.25),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: Colors.deepPurpleAccent.withOpacity(0.6)),
+            ),
+            child: Text(
+              role.toUpperCase(),
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.5),
+            ),
+          ),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -245,10 +268,11 @@ class _StatusBar extends StatelessWidget {
                 Text('Buffered: $buffered',
                     style: const TextStyle(
                         color: Colors.orange, fontSize: 11)),
-              if (isRecording && activeLabel > 0)
+              if (isRecording)
                 Text('Label: $activeLabel',
-                    style: const TextStyle(
-                        color: Colors.greenAccent, fontSize: 11)),
+                    style: TextStyle(
+                        color: activeLabel == 0 ? Colors.white54 : Colors.greenAccent,
+                        fontSize: 11)),
             ],
           ),
         ],
