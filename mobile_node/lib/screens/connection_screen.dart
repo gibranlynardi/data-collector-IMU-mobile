@@ -150,6 +150,21 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                         style: TextStyle(
                             fontSize: 16, fontWeight: FontWeight.bold)),
               ),
+              const SizedBox(height: 12),
+
+              // Third-party open-source license attribution (MIT/BSD compliance).
+              TextButton.icon(
+                onPressed: () => showLicensePage(
+                  context: context,
+                  applicationName: 'IMU Telemetry Node',
+                  applicationVersion: 'v2.0.0',
+                  applicationLegalese: '© 2026 IMU Telemetry Team',
+                ),
+                icon: const Icon(Icons.description_outlined,
+                    size: 16, color: Colors.white38),
+                label: const Text('Lisensi Pihak Ketiga',
+                    style: TextStyle(color: Colors.white38, fontSize: 12)),
+              ),
             ],
           ),
         ),
