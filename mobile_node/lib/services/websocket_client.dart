@@ -40,6 +40,8 @@ class WebSocketClient {
   int _packetsBuffered = 0;
   DateTime? _lastPong;
   String? _activeSessionId;
+  String? _lastConnectError;
+  String? get lastConnectError => _lastConnectError;
 
   // Pending CLOCK_SYNC requests: commandId → t0Ms
   final Map<String, int> _pendingSyncs = {};
@@ -64,6 +66,7 @@ class WebSocketClient {
       return true;
     }
     _serverIp = serverIp;
+    _lastConnectError = null;
     _setState(WsState.connecting);
 
     // Cancel any stale subscriptions from a previous (now-dead) connection so their
@@ -123,10 +126,20 @@ class WebSocketClient {
       // Real failure (network still down, handshake timed out). Go offline and let the
       // reconnect loop retry — do NOT report success, so the buffer is never flushed/cleared
       // against a dead socket (Defect B).
+      _lastConnectError = _describeConnectError(e);
       _setState(WsState.offline);
       _scheduleReconnect();
       return false;
     }
+  }
+
+  String _describeConnectError(Object e) {
+    final s = e.toString().toLowerCase();
+    if (s.contains('timeout')) return 'Timed out — laptop unreachable. Same Wi-Fi? Backend running? IP correct?';
+    if (s.contains('refused')) return 'Connection refused — backend not started on :8000 at this IP.';
+    if (s.contains('failed host lookup') || s.contains('no address')) return 'Bad IP address — re-check the number.';
+    if (s.contains('network is unreachable')) return 'Phone not on the same network as the laptop.';
+    return 'Could not connect. Check Wi-Fi, backend status, and the IP.';
   }
 
   // ── Attach sensor stream ─────────────────────────────────────────────────

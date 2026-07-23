@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import '../services/device_id_service.dart';
+import '../services/foreground_service_handler.dart';
 import '../services/websocket_client.dart';
 import 'preflight_screen.dart';
 
@@ -25,6 +27,9 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
   void initState() {
     super.initState();
     _load();
+    // Fire-and-forget: shows the "allow background / notification" system dialogs once,
+    // up front. Idempotent, never blocks the UI, does not affect connect().
+    ForegroundServiceHandler().ensurePermissions();
   }
 
   Future<void> _load() async {
@@ -59,7 +64,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
     } else {
       setState(() {
         _connecting = false;
-        _error = 'Could not connect to $ip:8000';
+        _error = WebSocketClient().lastConnectError ?? 'Could not connect to $ip:8000';
       });
     }
   }
@@ -149,6 +154,21 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                     : const Text('CONNECT',
                         style: TextStyle(
                             fontSize: 16, fontWeight: FontWeight.bold)),
+              ),
+              const SizedBox(height: 12),
+              TextButton(
+                onPressed: () =>
+                    FlutterForegroundTask.openIgnoreBatteryOptimizationSettings(),
+                child: const Text(
+                  'Phone keeps disconnecting? Tap to fix background limits',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white38, fontSize: 12),
+                ),
+              ),
+              const Text(
+                'On Xiaomi/Redmi also enable Autostart + set Battery to No restrictions (see setup card).',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white24, fontSize: 11),
               ),
             ],
           ),

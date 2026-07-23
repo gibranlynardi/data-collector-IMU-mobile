@@ -16,9 +16,10 @@ interface Props {
   sessionId?: string;
   devices: DeviceInfo[];
   isWsConnected: boolean;
+  backendIp?: string;
 }
 
-export default function StatusBanner({ state, sessionId, devices, isWsConnected }: Props) {
+export default function StatusBanner({ state, sessionId, devices, isWsConnected, backendIp }: Props) {
   const online = devices.filter(d => d.is_online);
   const totalPackets = devices.reduce((s, d) => s + d.packets, 0);
 
@@ -35,6 +36,11 @@ export default function StatusBanner({ state, sessionId, devices, isWsConnected 
       </div>
 
       <div className="flex items-center gap-6 text-xs">
+        {backendIp && (
+          <span className="opacity-60">
+            Backend: {backendIp} · {isWsConnected ? "connected" : "disconnected"}
+          </span>
+        )}
         <span>
           <span className={isWsConnected ? "text-green-400" : "text-red-400"}>
             {isWsConnected ? "● WS" : "○ WS"}
