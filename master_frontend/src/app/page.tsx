@@ -139,7 +139,20 @@ export default function Home() {
         wsClient.getState();
       } else if (++tries > 25) {
         clearInterval(poll);
-        setConnectError(`Cannot reach ${backendIp}:8000`);
+        probeBackend(backendIp).then(probe => {
+          if (probe.ok) {
+            const ipHint = probe.lanIp && probe.lanIp !== backendIp
+              ? ` Backend reports its IP is ${probe.lanIp} — try that.`
+              : "";
+            setConnectError(
+              `HTTP reachable but WebSocket did not open — check that this is the backend, not another service on :8000.${ipHint}`
+            );
+          } else {
+            setConnectError(
+              `${probe.reason}\nCheck: backend running? (run ops\\ip.ps1) · same Wi-Fi/subnet? · IP correct? · firewall allows inbound TCP 8000?`
+            );
+          }
+        });
       }
     }, 200);
   };
@@ -225,7 +238,7 @@ export default function Home() {
                 placeholder="192.168.1.100"
               />
             </div>
-            {connectError && <p className="text-xs text-red-400">{connectError}</p>}
+            {connectError && <p className="text-xs text-red-400 whitespace-pre-line">{connectError}</p>}
             <button
               onClick={handleConnect}
               className="btn-primary w-full py-2 font-bold text-sm"
@@ -251,7 +264,7 @@ export default function Home() {
     <>
       <AmbientBackdrop state={sessionState} />
       <div className="relative z-10 flex flex-col h-screen overflow-hidden">
-        <StatusBanner state={sessionState} sessionId={sessionId} devices={devices} isWsConnected={isWsConnected} />
+        <StatusBanner state={sessionState} sessionId={sessionId} devices={devices} isWsConnected={isWsConnected} backendIp={backendIp} />
 
         <div className="flex flex-1 gap-0 overflow-hidden min-h-0">
           {/* Left panel */}
@@ -375,4 +388,20 @@ function _downloadBlob(blob: Blob, name: string) {
   a.download = name;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+async function probeBackend(ip: string): Promise<
+  { ok: true; lanIp?: string } | { ok: false; reason: string }
+> {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2000);
+    const res = await fetch(`http://${ip}:8000/health`, { signal: ctrl.signal });
+    clearTimeout(t);
+    if (!res.ok) return { ok: false, reason: `Backend answered HTTP ${res.status}` };
+    const j = await res.json();
+    return { ok: true, lanIp: j.lan_ip };
+  } catch {
+    return { ok: false, reason: "No HTTP response (backend not started, wrong IP, or firewall/subnet)" };
+  }
 }

@@ -40,8 +40,20 @@ async def lifespan(app: FastAPI):
     _check_interrupted_sessions()
     asyncio.create_task(_live_broadcaster_loop())
     asyncio.create_task(session_manager.run_idle_reaper())
-    logger.info("IMU Telemetry Backend ready — listening on %s:%s",
-                os.getenv("BIND_HOST", "0.0.0.0"), os.getenv("PORT", "8000"))
+    local_ip = _get_local_ip()
+    port = int(os.getenv("PORT", "8000"))
+    logger.info(
+        "\n"
+        "==================================================================\n"
+        "  IMU Telemetry Backend — READY\n"
+        "  Dashboard (this laptop) : http://localhost:3000\n"
+        "  Backend LAN IP          : %s:%s   <-- type THIS into phones & dashboard\n"
+        "  Phone telemetry WS      : ws://%s:%s/ws/telemetry\n"
+        "  Phone control   WS      : ws://%s:%s/ws/control\n"
+        "  Health check            : http://%s:%s/health\n"
+        "==================================================================",
+        local_ip, port, local_ip, port, local_ip, port, local_ip, port,
+    )
     yield
     # Shutdown
     await audit.close()
@@ -66,12 +78,19 @@ app.include_router(ws_router)
 
 @app.get("/health")
 async def health():
+    local_ip = _get_local_ip()
+    port = int(os.getenv("PORT", "8000"))
     return {
         "status": "ok",
         "version": "2.0.0",
         "session_state": session_manager.state,
         "session_id": session_manager.session_id or None,
         "online_devices": len(session_manager.online_devices),
+        # --- added (additive) ---
+        "lan_ip": local_ip,
+        "port": port,
+        "ws_telemetry": f"ws://{local_ip}:{port}/ws/telemetry",
+        "ws_control": f"ws://{local_ip}:{port}/ws/control",
     }
 
 

@@ -18,6 +18,31 @@ The recommended order is backend first, then dashboard, then the phones.
 
 ## 1. Backend setup
 
+## Quick start (all-in-one)
+
+Assumes env + build already done (see first-time setup below if not):
+
+- Double-click **`start.bat`**, or run **`.\start.ps1`**, or **`make start`**.
+- It prints the **Backend LAN IP** to type into the phones, then launches backend +
+  frontend in separate windows and opens the dashboard.
+
+To check the backend IP anytime WITHOUT stopping it, run **`.\ops\ip.ps1`** (or `make ip`)
+in a second terminal.
+
+### For peers pulling this repo
+
+1. Check out this branch: `git fetch && git checkout experiment/operational-frontend-fixes && git pull`.
+2. You need your own `master_backend/.env` (copy from `.env.example`), `master_backend/venv/`,
+   and `master_frontend/node_modules/` — none of these travel with git. `start.ps1` warns if
+   any are missing instead of failing outright.
+3. The phones do **not** update from git — Flutter changes need a fresh
+   `flutter build apk --release` and reinstall per phone.
+
+See `connectivity_ops_fixes_plan.md` §9a for the full peer-onboarding rationale.
+
+---
+
+## Backend (FastAPI)
 The backend is responsible for session state, WebSocket routing, audit logging, and mDNS discovery.
 
 ### First-time setup
@@ -129,9 +154,8 @@ If you are building the app locally, install Flutter dependencies in `mobile_nod
 
 ## Finding the laptop IP
 
-```powershell
-ipconfig | findstr "IPv4"
-```
+Run `.\ops\ip.ps1` — it lists every IPv4, marks the LAN one to use, checks whether the
+backend is up on :8000, and probes /health. (Fallback: `ipconfig | findstr "IPv4"`.)
 
 Use the IP that is on the same Wi-Fi subnet as the phones, usually something like 192.168.1.x.
 
@@ -139,6 +163,19 @@ Use the IP that is on the same Wi-Fi subnet as the phones, usually something lik
 
 | Problem | Fix |
 |---------|-----|
+| `ModuleNotFoundError` on backend start | Run from repo root, not from inside `master_backend/` |
+| Port 8000 already in use | `netstat -ano \| findstr :8000` → kill the PID (or `.\ops\stop.ps1`) |
+| Frontend can't reach backend | Dashboard now shows the reason + a checklist on a failed connect; run `.\ops\ip.ps1` to confirm the backend IP and that :8000 is listening. Check the Windows Firewall inbound rule for TCP 8000 on the Private network. |
+| Flutter can't find server via mDNS | Enter the laptop IP manually (the phone now shows a specific failure reason); if it drops mid-session on Xiaomi/Redmi, see `docs/REDMI_NOTE_12_SETUP.md` |
+| Phone disconnects mid-session (Redmi/Xiaomi) | Apply `docs/REDMI_NOTE_12_SETUP.md` per phone (Autostart, Battery = No restrictions, lock in recents, keep Wi-Fi on during sleep). Data is buffered + re-flushed, not lost. |
+| `SSD_PATH` write error on first run | Create the directory or update `.env` to an existing writable path |
+
+---
+
+## See also
+
+- `docs/REDMI_NOTE_12_SETUP.md` — per-phone MIUI/HyperOS setup to stop mid-session drops.
+- `connectivity_ops_fixes_plan.md` — what changed in the launcher/diagnostics/Redmi fixes and why.
 | Backend fails with ModuleNotFoundError | Run commands from the repository root or activate the backend virtual environment first |
 | Port 8000 already in use | Check which process owns the port and stop it before restarting |
 | Frontend cannot connect to backend | Verify the backend is running, the IP is correct, and the firewall allows LAN traffic on port 8000 |

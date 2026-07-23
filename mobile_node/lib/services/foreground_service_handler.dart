@@ -42,6 +42,19 @@ class ForegroundServiceHandler {
     );
   }
 
+  // Asks Android for the notification grant and the battery-optimization exemption —
+  // the two biggest levers against OEM (MIUI/HyperOS) background-killing the foreground
+  // service. Idempotent: safe to call repeatedly, only prompts when not already granted.
+  Future<void> ensurePermissions() async {
+    final np = await FlutterForegroundTask.checkNotificationPermission();
+    if (np != NotificationPermission.granted) {
+      await FlutterForegroundTask.requestNotificationPermission();
+    }
+    if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
+      await FlutterForegroundTask.requestIgnoreBatteryOptimization();
+    }
+  }
+
   void updateStatus(String text) {
     FlutterForegroundTask.updateService(notificationText: text);
   }
